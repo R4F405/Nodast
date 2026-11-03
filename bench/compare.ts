@@ -5,7 +5,7 @@ import { GOALS, bush, editMillis, payload, plainVerdict, stripFence } from "./me
 
 const ATTEMPTS = 3;
 
-type Loop = { pass1: boolean; attempts: number; ok: boolean; completionTokens: number | null };
+type Loop = { pass1: boolean; attempts: number; ok: boolean; completionTokens: number | null; error: string | null };
 
 type Reply = { content: string; completionTokens: number | null };
 
@@ -69,7 +69,13 @@ async function nodastLoop(goal: string): Promise<Loop> {
     },
   }, { attempts: ATTEMPTS });
   const completionTokens = tokens.length === 0 ? null : tokens[0] ?? null;
-  return { pass1: result.ok && result.attempts === 1, attempts: result.attempts, ok: result.ok, completionTokens };
+  return {
+    pass1: result.ok && result.attempts === 1,
+    attempts: result.attempts,
+    ok: result.ok,
+    completionTokens,
+    error: result.ok ? null : result.error.code,
+  };
 }
 
 async function plainLoop(goal: string): Promise<Loop> {
@@ -82,14 +88,14 @@ async function plainLoop(goal: string): Promise<Loop> {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       rejections.push({ response: "", error: `model-error ${message}` });
-      return { pass1: false, attempts: attempt, ok: false, completionTokens };
+      return { pass1: false, attempts: attempt, ok: false, completionTokens, error: "model-error" };
     }
     if (attempt === 1) completionTokens = reply.completionTokens;
     const verdict = plainVerdict(reply.content);
-    if (verdict.ok) return { pass1: attempt === 1, attempts: attempt, ok: true, completionTokens };
+    if (verdict.ok) return { pass1: attempt === 1, attempts: attempt, ok: true, completionTokens, error: null };
     rejections.push({ response: stripFence(reply.content), error: verdict.error });
   }
-  return { pass1: false, attempts: ATTEMPTS, ok: false, completionTokens };
+  return { pass1: false, attempts: ATTEMPTS, ok: false, completionTokens, error: rejections.at(-1)?.error ?? null };
 }
 
 function percent(hits: number, total: number): string {
@@ -133,6 +139,7 @@ async function rewriteMs(): Promise<{ ms: number; tokens: number | null }> {
 }
 
 loadEnv(".env");
+const modelName = process.env.MINIMAX_MODEL || "MiniMax-M3.1-Flash";
 const samples = [
   payload("(let x (add 1 2) x)"),
   payload("(fn (x) (add x 1))"),
@@ -166,7 +173,9 @@ const rows = GOALS.map((goal, index) => {
   const left = nodast[index];
   const right = plain[index];
   if (left === undefined || right === undefined) throw new Error("missing sample");
-  return `| ${goal} | ${left.ok ? left.attempts : `${left.attempts} y falló`} | ${right.ok ? right.attempts : `${right.attempts} y falló`} |`;
+  const leftCell = left.ok ? String(left.attempts) : `${left.attempts} y falló (${left.error})`;
+  const rightCell = right.ok ? String(right.attempts) : `${right.attempts} y falló (${right.error})`;
+  return `| ${goal} | ${leftCell} | ${rightCell} |`;
 });
 
 const payloadRows = samples.map((sample, index) => {
@@ -176,7 +185,7 @@ const payloadRows = samples.map((sample, index) => {
 
 const markdown = `# Medición
 
-Cuatro números, el ${new Date().toISOString().slice(0, 10)}, con ${GOALS.length} objetivos y tope de ${ATTEMPTS} intentos. \`pnpm bench\` repite la pasada y llama a MiniMax. La velocidad interna del motor está aparte, en [bench/engine.md](bench/engine.md).
+Cuatro números, el ${new Date().toISOString().slice(0, 10)}, con ${modelName}, ${GOALS.length} objetivos y tope de ${ATTEMPTS} intentos. \`pnpm bench\` repite la pasada y llama a MiniMax. La velocidad interna del motor está aparte, en [bench/engine.md](bench/engine.md).
 
 Los tokens del texto son léxicos: identificadores, números, operadores y signos, con el mismo contador en los dos textos. El buffer no es un flujo de tokens; se compara en bytes. Los tokens de respuesta, cuando MiniMax los informa, son \`completion_tokens\` de la primera respuesta.
 

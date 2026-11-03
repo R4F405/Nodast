@@ -6,6 +6,12 @@ const PROMPT = `Reply with only one program, or one (edits ...) list. No prose.
 
 (edits (replace id expr) (insert id index expr) (delete id))
 
+example:
+goal: bind the difference of 8 and 3
+program:
+none
+(let x (sub 8 3) x)
+
 goal: bind the sum
 
 program:
