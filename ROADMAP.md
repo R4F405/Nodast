@@ -11,6 +11,8 @@ Qué hay, qué se construye ahora y qué queda fuera hasta que el círculo cierr
 | README, contribución, licencia | Hecho |
 | Código del PoC | Fases 1 a 4 hechas. PoC cerrado |
 | Binario | Hecho |
+| Gramática del texto compacto | Hecho. MiniMax no puede aplicarla al muestrear |
+| Motor en Rust | Hecho. `cargo test --manifest-path rust/Cargo.toml` |
 
 ## PoC
 
@@ -105,8 +107,8 @@ La clave se lee de `MINIMAX_API_KEY` y no entra en el repositorio. El cliente us
 En este orden, salvo que una medición diga lo contrario:
 
 1. **Binario.** **Estado: hecho.** El árbol se aplana a un buffer little-endian (`NDS1`, versión 1) y se vuelve a cargar sin parsear el texto. `encode` no comprueba tipos: el checker va antes. El motor en Rust leerá este mismo buffer.
-2. **Gramática en el decodificador.** Si el runtime del modelo lo permite, impedir en el muestreo los tokens que romperían la forma. Menos reintentos.
-3. **Motor en Rust.** Misma decisión de arriba: el mismo árbol, el mismo checker, el printer y el binario. TypeScript del PoC sigue siendo la referencia de comportamiento.
+2. **Gramática en el decodificador.** **Estado: hecho en local.** `grammar` dice si un programa o una lista `(edits ...)` ya puede cerrarse, y `allows` dice si el carácter siguiente seguiría siendo válido. MiniMax-M3.1-Flash no enmascara el muestreo: su API no acepta una gramática ni `response_format`. El cliente no envía un parámetro que el modelo ignoraría. La máscara queda lista para un runtime que sí pueda usarla.
+3. **Motor en Rust.** **Estado: hecho.** Vive en `rust/` y repite el árbol, el parser, el checker, el printer, las operaciones y el binario. Se prueba con `cargo test --manifest-path rust/Cargo.toml`. TypeScript del PoC sigue siendo la referencia de comportamiento.
 4. **Más printers.** Otro lenguaje de salida leyendo la misma IR. Solo cuando el printer de TypeScript lleve un tiempo estable.
 5. **Evaluador.** Ejecutar el árbol validado sin pasar por el fuente, si hace falta para tests o para un runtime.
 

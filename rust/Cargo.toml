@@ -1,0 +1,9 @@
+[package]
+name = "nodast"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Nodast engine. The TypeScript PoC remains the behavior reference."
+
+[lib]
+path = "src/lib.rs"
