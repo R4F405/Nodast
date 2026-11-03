@@ -87,7 +87,7 @@ El proyecto del PoC se escribe en TypeScript. La IR no es el AST de TypeScript n
 
 ## Qué hay hoy
 
-Parser, printer, checker, operaciones, el bucle con el modelo, el buffer binario y la gramática local del texto compacto. Los tests usan un fixture y no llaman a la red. El cliente real es MiniMax, con la clave fuera del repositorio. MiniMax no puede aplicar esa gramática al muestrear. El detalle está en el [roadmap](ROADMAP.md).
+Parser, printer, checker, operaciones, el bucle con el modelo, el buffer binario y la gramática local del texto compacto. El mismo árbol, checker, printer y binario también están en Rust, en `rust/`. Los tests usan un fixture y no llaman a la red. El cliente real es MiniMax, con la clave fuera del repositorio. MiniMax no puede aplicar esa gramática al muestrear. El detalle está en el [roadmap](ROADMAP.md).
 
 ## Decisiones cerradas
 
@@ -103,18 +103,19 @@ Estas no se reabren en un pull request sin una issue que las discuta antes:
 
 ## Empezar
 
-Hace falta Node 22.18 o superior y pnpm 11.5. La versión de pnpm queda fijada en `packageManager`.
+Hace falta Node 22.18 o superior, pnpm 11.5 y Rust. La versión de pnpm queda fijada en `packageManager`.
 
 ```sh
 pnpm install
 pnpm test
 pnpm typecheck
+cargo test --manifest-path rust/Cargo.toml
 pnpm ask -- "bind the sum of 1 and 2"
 ```
 
 `pnpm ask` lee `.env` y llama a MiniMax. `pnpm test` no.
 
-`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
+`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. `cargo test` recorre el motor en Rust. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licencia
 
