@@ -10,6 +10,7 @@ Qué hay, qué se construye ahora y qué queda fuera hasta que el círculo cierr
 | Lenguaje del PoC y del motor | Hecho. Ver abajo |
 | README, contribución, licencia | Hecho |
 | Código del PoC | Fases 1 a 4 hechas. PoC cerrado |
+| Binario | Hecho |
 
 ## PoC
 
@@ -103,7 +104,7 @@ La clave se lee de `MINIMAX_API_KEY` y no entra en el repositorio. El cliente us
 
 En este orden, salvo que una medición diga lo contrario:
 
-1. **Binario.** Árbol validado, aplanado a un buffer, para guardarlo y cargarlo sin parsear.
+1. **Binario.** **Estado: hecho.** El árbol se aplana a un buffer little-endian (`NDS1`, versión 1) y se vuelve a cargar sin parsear el texto. `encode` no comprueba tipos: el checker va antes. El motor en Rust leerá este mismo buffer.
 2. **Gramática en el decodificador.** Si el runtime del modelo lo permite, impedir en el muestreo los tokens que romperían la forma. Menos reintentos.
 3. **Motor en Rust.** Misma decisión de arriba: el mismo árbol, el mismo checker, el printer y el binario. TypeScript del PoC sigue siendo la referencia de comportamiento.
 4. **Más printers.** Otro lenguaje de salida leyendo la misma IR. Solo cuando el printer de TypeScript lleve un tiempo estable.
