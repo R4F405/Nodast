@@ -13,6 +13,7 @@ Qué hay, qué se construye ahora y qué queda fuera hasta que el círculo cierr
 | Binario | Hecho |
 | Gramática del texto compacto | Hecho. MiniMax no puede aplicarla al muestrear |
 | Motor en Rust | Hecho. `cargo test --manifest-path rust/Cargo.toml` |
+| Medición | Hecho. Ver [BENCH.md](BENCH.md) |
 
 ## PoC
 
@@ -109,8 +110,9 @@ En este orden, salvo que una medición diga lo contrario:
 1. **Binario.** **Estado: hecho.** El árbol se aplana a un buffer little-endian (`NDS1`, versión 1) y se vuelve a cargar sin parsear el texto. `encode` no comprueba tipos: el checker va antes. El motor en Rust leerá este mismo buffer.
 2. **Gramática en el decodificador.** **Estado: hecho en local.** `grammar` dice si un programa o una lista `(edits ...)` ya puede cerrarse, y `allows` dice si el carácter siguiente seguiría siendo válido. MiniMax-M3.1-Flash no enmascara el muestreo: su API no acepta una gramática ni `response_format`. El cliente no envía un parámetro que el modelo ignoraría. La máscara queda lista para un runtime que sí pueda usarla.
 3. **Motor en Rust.** **Estado: hecho.** Vive en `rust/` y repite el árbol, el parser, el checker, el printer, las operaciones y el binario. Se prueba con `cargo test --manifest-path rust/Cargo.toml`. TypeScript del PoC sigue siendo la referencia de comportamiento.
-4. **Más printers.** Otro lenguaje de salida leyendo la misma IR. Solo cuando el printer de TypeScript lleve un tiempo estable.
-5. **Evaluador.** Ejecutar el árbol validado sin pasar por el fuente, si hace falta para tests o para un runtime.
+4. **Medición.** **Estado: hecho** el 3 de noviembre de 2026. Los números están en [BENCH.md](BENCH.md). En el árbol medido el motor tarda milisegundos y una llamada al modelo tarda segundos. El buffer se carga más rápido que el texto y pesa más. Este Rust todavía no adelanta a Node.
+5. **Más printers.** Otro lenguaje de salida leyendo la misma IR. Solo cuando el printer de TypeScript lleve un tiempo estable.
+6. **Evaluador.** Ejecutar el árbol validado sin pasar por el fuente, si hace falta para tests o para un runtime.
 
 ## Fuera de alcance
 

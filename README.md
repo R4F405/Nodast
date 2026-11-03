@@ -87,7 +87,7 @@ El proyecto del PoC se escribe en TypeScript. La IR no es el AST de TypeScript n
 
 ## Qué hay hoy
 
-Parser, printer, checker, operaciones, el bucle con el modelo, el buffer binario y la gramática local del texto compacto. El mismo árbol, checker, printer y binario también están en Rust, en `rust/`. Los tests usan un fixture y no llaman a la red. El cliente real es MiniMax, con la clave fuera del repositorio. MiniMax no puede aplicar esa gramática al muestrear. El detalle está en el [roadmap](ROADMAP.md).
+Parser, printer, checker, operaciones, el bucle con el modelo, el buffer binario y la gramática local del texto compacto. El mismo árbol, checker, printer y binario también están en Rust, en `rust/`. La medición de ese motor está en [BENCH.md](BENCH.md). Los tests usan un fixture y no llaman a la red. El cliente real es MiniMax, con la clave fuera del repositorio. MiniMax no puede aplicar esa gramática al muestrear. El detalle está en el [roadmap](ROADMAP.md).
 
 ## Decisiones cerradas
 
@@ -115,7 +115,7 @@ pnpm ask -- "bind the sum of 1 and 2"
 
 `pnpm ask` lee `.env` y llama a MiniMax. `pnpm test` no.
 
-`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. `cargo test` recorre el motor en Rust. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
+`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. `cargo test` recorre el motor en Rust. `pnpm bench` mide el motor en local. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licencia
 

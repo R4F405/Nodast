@@ -7,3 +7,7 @@ description = "Nodast engine. The TypeScript PoC remains the behavior reference.
 
 [lib]
 path = "src/lib.rs"
+
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
