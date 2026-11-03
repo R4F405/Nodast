@@ -1,0 +1,21 @@
+{
+  "name": "nodast",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The model proposes nodes. A printer writes the code.",
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "pnpm@11.5.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test",
+    "typecheck": "tsc --noEmit",
+    "ask": "node --experimental-strip-types --env-file=.env src/ask.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3"
+  }
+}
