@@ -9,4 +9,6 @@ export { parse } from "./parse.ts";
 export { print } from "./print.ts";
 export { decode, encode } from "./binary.ts";
 export type { BinaryError, BinaryResult } from "./binary.ts";
+export { allows, grammar } from "./grammar.ts";
+export type { GrammarShape, GrammarState } from "./grammar.ts";
 export type { Expr, ParseError, ParseResult, SourcePosition } from "./ir.ts";

@@ -87,7 +87,7 @@ El proyecto del PoC se escribe en TypeScript. La IR no es el AST de TypeScript n
 
 ## Qué hay hoy
 
-Parser, printer, checker, operaciones, el bucle con el modelo y el buffer binario. Los tests usan un fixture y no llaman a la red. El cliente real es MiniMax, con la clave fuera del repositorio. El detalle está en el [roadmap](ROADMAP.md).
+Parser, printer, checker, operaciones, el bucle con el modelo, el buffer binario y la gramática local del texto compacto. Los tests usan un fixture y no llaman a la red. El cliente real es MiniMax, con la clave fuera del repositorio. MiniMax no puede aplicar esa gramática al muestrear. El detalle está en el [roadmap](ROADMAP.md).
 
 ## Decisiones cerradas
 
@@ -114,7 +114,7 @@ pnpm ask -- "bind the sum of 1 and 2"
 
 `pnpm ask` lee `.env` y llama a MiniMax. `pnpm test` no.
 
-`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo y el binario, sin red. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
+`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licencia
 
