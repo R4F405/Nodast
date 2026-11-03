@@ -7,4 +7,6 @@ export type { ApplyResult, Edit, EditError } from "./edit.ts";
 export { minimax, minimaxFromEnv } from "./minimax.ts";
 export { parse } from "./parse.ts";
 export { print } from "./print.ts";
+export { decode, encode } from "./binary.ts";
+export type { BinaryError, BinaryResult } from "./binary.ts";
 export type { Expr, ParseError, ParseResult, SourcePosition } from "./ir.ts";
