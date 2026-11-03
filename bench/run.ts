@@ -298,5 +298,5 @@ El motor en Rust no adelanta a Node en ese árbol. El checker de Rust tarda ${us
 El motor, incluso en el árbol grande, está por debajo de 3 ms. Una llamada al modelo está en segundos. Acelerar el parser no mueve el círculo.
 `;
 
-writeFileSync("BENCH.md", markdown);
+writeFileSync("bench/engine.md", markdown);
 process.stdout.write(markdown);

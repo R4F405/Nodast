@@ -115,7 +115,7 @@ pnpm ask -- "bind the sum of 1 and 2"
 
 `pnpm ask` lee `.env` y llama a MiniMax. `pnpm test` no.
 
-`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. `cargo test` recorre el motor en Rust. `pnpm bench` mide el motor en local. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
+`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. `cargo test` recorre el motor en Rust. `pnpm bench` mide validez, payload, edición y reintentos, y llama a MiniMax. `pnpm bench:engine` mide solo el motor, en local. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licencia
 

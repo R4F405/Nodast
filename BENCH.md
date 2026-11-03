@@ -1,43 +1,49 @@
 # Medición
 
-Una pasada en esta máquina, el 2026-11-03. No es un test de regresión. `pnpm bench` vuelve a medir el motor en local. `pnpm bench -- --model` añade una llamada a MiniMax.
+Cuatro números, el 2026-11-03, con 5 objetivos y tope de 3 intentos. `pnpm bench` repite la pasada y llama a MiniMax. La velocidad interna del motor está aparte, en [bench/engine.md](bench/engine.md).
 
-Rust va en `--release`. Cada celda es la mediana. El programa corto se midió 10,000 veces y el grande 40 veces, después de un calentamiento. El árbol grande es una suma equilibrada de unos, de profundidad 12.
+Los tokens del texto son léxicos: identificadores, números, operadores y signos, con el mismo contador en los dos textos. El buffer no es un flujo de tokens; se compara en bytes. Los tokens de respuesta, cuando MiniMax los informa, son `completion_tokens` de la primera respuesta.
 
-| | |
-| --- | --- |
-| Sistema | win32 10.0.26300 |
-| CPU | AMD Ryzen 5 5600X 6-Core Processor |
-| RAM | 31.9 GB |
-| Node | v22.19.0 |
-| Rust | rustc 1.97.1 (8bab26f4f 2026-07-14) |
+## Validez estructural
 
-El programa corto es `(let x (add 1 2) x)`: 5 nodos, 19 bytes de texto, 97 bytes de buffer. El checker dice `number`.
+Pass@1 es la primera respuesta. Nodast tiene que parsear y pasar `check`. El texto plano tiene que salir de `tsc` sin error y correr sin `SyntaxError` ni `TypeError`.
 
-| Operación | TypeScript | Rust |
+| | Nodast | Texto plano |
 | --- | ---: | ---: |
-| Parsear el texto | 1.4 µs | 1.3 µs |
-| Cargar el buffer | 1.4 µs | 1.1 µs |
-| Checker | 0.8 µs | 0.9 µs |
-| Printer | 0.7 µs | 0.7 µs |
+| Pass@1 | 0/5 (0%) | 5/5 (100%) |
+| Aciertos en ≤ 3 intentos | 0/5 (0%) | 5/5 (100%) |
+| Reintentos medios tras el primer fallo, solo si luego acierta | — | — |
+| Tokens medios de la primera respuesta | 341 | 61 |
 
-El programa grande tiene 8,191 nodos, 32,761 bytes de texto y 146,348 bytes de buffer. El checker dice `number`. El printer emite 20,477 bytes.
-
-| Operación | TypeScript | Rust |
+| Objetivo | Intentos Nodast | Intentos texto plano |
 | --- | ---: | ---: |
-| Parsear el texto | 2179 µs | 2808 µs |
-| Cargar el buffer | 1073 µs | 1649 µs |
-| Checker | 705 µs | 1673 µs |
-| Printer | 668 µs | 1210 µs |
+| bind the sum of 1 and 2 | 3 y falló | 1 |
+| define a function that adds 1 to its number argument | 3 y falló | 1 |
+| bind x to 1, then return 0 when x is less than 0, otherwise x | 3 y falló | 1 |
+| multiply 3 by 4 | 3 y falló | 1 |
+| define a function of two numbers that returns whether the first is less than the second | 3 y falló | 1 |
 
-## Llamada al modelo
+Nodast no acertó ningún objetivo, ni a la primera ni al tercer intento, así que no hay una corrección que cerrar. El texto plano acertó los cinco a la primera. `completion_tokens` puede incluir el razonamiento del modelo; los dos lados usan el mismo ajuste.
 
-Dos pasadas seguidas del contrato, con el objetivo «bind the sum of 1 and 2». La primera tardó 18.8 s y la segunda 13.5 s. Las dos agotaron los 3 intentos con `undefined-name` y no llegaron al printer.
+## Payload
 
-## Qué dicen los números
+| Programa | Compacto, bytes / tokens | Buffer, bytes | TypeScript, bytes / tokens |
+| --- | ---: | ---: | ---: |
+| let y suma | 19 / 10 | 97 | 20 / 9 |
+| función de un argumento | 18 / 11 | 82 | 16 / 10 |
+| if con x ligado | 27 / 15 | 142 | 28 / 13 |
+| suma de 8191 nodos | 32761 / 16381 | 146348 | 20477 / 12286 |
 
-En el programa corto todo queda alrededor de 1 µs. En el grande, cargar el buffer tarda cerca de la mitad que parsear el texto: 1.1 ms frente a 2.2 ms en TypeScript, y 1.6 ms frente a 2.8 ms en Rust. El buffer no ahorra espacio. Pesa 4.47 veces el texto, porque cada nodo guarda su id.
+En estos cuatro programas el buffer pesa más que el TypeScript impreso. El texto compacto queda parecido al fuente en los cortos y más largo en la suma grande.
 
-Este motor en Rust no adelanta a Node en ese árbol. El checker de Rust tarda 1.7 ms y el de TypeScript 0.7 ms.
+## Edición
 
-El motor, incluso con 8191 nodos, está por debajo de 3 ms. Una llamada al modelo está en segundos. Acelerar el parser no mueve el círculo.
+Cambiar el `1` de `(let x (add 1 2) x)` por `9`. La edición local es la mediana de 10.000 veces. La reescritura es una llamada que pide el archivo entero.
+
+| Vía | Tiempo |
+| --- | ---: |
+| `edit.ts` | 0.009 ms |
+| `edit.rs` | 0.002 ms |
+| Reescribir el archivo con el modelo | 787 ms |
+
+La edición local queda por debajo de 0.01 ms. Pedirle al modelo el archivo entero tardó 787 ms.

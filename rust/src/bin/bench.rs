@@ -4,16 +4,22 @@ use std::hint::black_box;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use nodast::{check, decode, encode, parse, print};
+use nodast::{apply_edits, check, decode, encode, parse, print, Edit, Expr};
 
 fn main() -> ExitCode {
-    let mut args = env::args().skip(1);
-    let Some(small_text) = args.next() else { return usage(); };
-    let Some(large_text) = args.next() else { return usage(); };
-    let Some(small_bin) = args.next() else { return usage(); };
-    let Some(large_bin) = args.next() else { return usage(); };
-    let Some(small_iters) = args.next().and_then(|value| value.parse::<u32>().ok()) else { return usage(); };
-    let Some(large_iters) = args.next().and_then(|value| value.parse::<u32>().ok()) else { return usage(); };
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--edit") {
+        return edit_bench();
+    }
+    if args.len() != 6 {
+        return usage();
+    }
+    let Some(small_text) = args.first() else { return usage(); };
+    let Some(large_text) = args.get(1) else { return usage(); };
+    let Some(small_bin) = args.get(2) else { return usage(); };
+    let Some(large_bin) = args.get(3) else { return usage(); };
+    let Some(small_iters) = args.get(4).and_then(|value| value.parse::<u32>().ok()) else { return usage(); };
+    let Some(large_iters) = args.get(5).and_then(|value| value.parse::<u32>().ok()) else { return usage(); };
 
     if report("small", &small_text, &small_bin, small_iters).is_err() {
         return ExitCode::from(1);
@@ -22,6 +28,51 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS
+}
+
+fn edit_bench() -> ExitCode {
+    let source = "(let x (add 1 2) x)";
+    let tree = match parse(source) {
+        Ok(tree) => tree,
+        Err(error) => {
+            eprintln!("{}", error.message);
+            return ExitCode::from(1);
+        }
+    };
+    let Some(id) = find_num(&tree, 1.0) else {
+        eprintln!("missing literal");
+        return ExitCode::from(1);
+    };
+    let edit = Edit::Replace { id: id.clone(), node: Expr::Num { id, value: 9.0 } };
+    let once = match apply_edits(&tree, &[edit.clone()]) {
+        Ok(tree) => tree,
+        Err(_) => {
+            eprintln!("edit failed");
+            return ExitCode::from(1);
+        }
+    };
+    let printed = print(&once);
+    if printed != "const x = 9 + 2;\nx;\n" {
+        eprintln!("unexpected print {printed}");
+        return ExitCode::from(1);
+    }
+    let edit_ns = time(10_000, || apply_edits(&tree, &[edit.clone()]).map(|next| next.id().len() as u64).unwrap_or(0));
+    println!("edit_ns {edit_ns}");
+    ExitCode::SUCCESS
+}
+
+fn find_num(expr: &Expr, value: f64) -> Option<String> {
+    if let Expr::Num { id, value: found } = expr {
+        if *found == value {
+            return Some(id.clone());
+        }
+    }
+    for child in expr.children() {
+        if let Some(id) = find_num(child, value) {
+            return Some(id);
+        }
+    }
+    None
 }
 
 fn usage() -> ExitCode {
