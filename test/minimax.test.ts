@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { minimax, minimaxFromEnv } from "../src/minimax.ts";
+import { minimax, minimaxFromEnv, stripThink } from "../src/minimax.ts";
 
 test("posts the prompt to MiniMax and returns the reply", async () => {
   const seen: { url: string; init: RequestInit }[] = [];
@@ -48,4 +48,11 @@ test("fails without a key and when MiniMax rejects the call", async () => {
   await assert.rejects(async () => {
     await model.complete("hi");
   }, /MiniMax 401/);
+});
+
+test("drops the reasoning block that MiniMax puts in content", () => {
+  assert.equal(stripThink("<think>plan it</think>\n\n(add 1 2)"), "\n\n(add 1 2)");
+  assert.equal(stripThink("(add 1 2)"), "(add 1 2)");
+  assert.equal(stripThink("<think>a</think>x<think>b</think>y"), "xy");
+  assert.equal(stripThink("<think>cut off"), "");
 });

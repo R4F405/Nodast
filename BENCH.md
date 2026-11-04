@@ -1,43 +1,104 @@
 # Medición
 
-Cuatro números, el 2026-11-03, con MiniMax-M3.1-Flash, 5 objetivos y tope de 3 intentos. `pnpm bench` repite la pasada y llama a MiniMax. La velocidad interna del motor está aparte, en [bench/engine.md](bench/engine.md).
+Una pasada el 2026-11-04 con MiniMax-M3, temperatura 0.01, 3 repeticiones por objetivo y tope de 3 intentos. `pnpm bench` la repite y llama a MiniMax. `BENCH_RUNS`, `BENCH_SIZES`, `BENCH_CONCURRENCY` y `BENCH_TEMPERATURE` la ajustan. La velocidad interna del motor está aparte, en [bench/engine.md](bench/engine.md).
 
-Los tokens del texto son léxicos: identificadores, números, operadores y signos, con el mismo contador en los dos textos. El buffer no es un flujo de tokens; se compara en bytes. Los tokens de respuesta, cuando MiniMax los informa, son `completion_tokens` de la primera respuesta.
+Válido: Nodast parsea y pasa `check`; el texto plano sale de `tsc` sin error y corre. Correcto: además, el valor de la última expresión coincide con el oráculo del objetivo, o la función que devuelve da lo esperado con varias entradas. Los dos lados reintentan solo por errores estructurales; el oráculo no se le enseña al modelo.
 
-## Validez estructural
+El bloque `<think>` que MiniMax mete en `content` se quita antes de juzgar. Un fallo de API, tras 5 reintentos de red, no cuenta como fallo del formato: se excluye y se informa aparte. `completion_tokens` incluye el razonamiento del modelo; la respuesta visible se cuenta aparte con el contador léxico.
 
-Pass@1 es la primera respuesta. Nodast tiene que parsear y pasar `check`. El texto plano tiene que salir de `tsc` sin error y correr sin `SyntaxError` ni `TypeError`.
+## Escribir desde cero
 
-| | Nodast | Texto plano |
+12 objetivos × 3 repeticiones.
+
+|  | Nodast | Texto plano |
 | --- | ---: | ---: |
-| Pass@1 | 2/5 (40%) | 4/5 (80%) |
-| Aciertos en ≤ 3 intentos | 3/5 (60%) | 5/5 (100%) |
-| Reintentos medios tras el primer fallo, solo si luego acierta | 1.0 | 1.0 |
-| Tokens medios de la primera respuesta | 174 | 50 |
+| Pass@1, válido al primer intento | 32/36 (89%) | 36/36 (100%) |
+| Válido en ≤ 3 intentos | 36/36 (100%) | 36/36 (100%) |
+| Correcto en ≤ 3 intentos (oráculo) | 35/36 (97%) | 34/36 (94%) |
+| Intentos medios | 1.11 | 1.00 |
+| `completion_tokens` medios, todos los intentos | 546 | 236 |
+| Respuesta visible, tokens léxicos medios | 22 | 21 |
+| Respuesta visible, bytes medios | 41 | 47 |
+| Latencia media, todos los intentos | 4992 ms | 2404 ms |
+| Fallos de API excluidos | 0 | 0 |
+| Fallos | wrong-result ×1 | wrong-result ×2 |
 
-| Objetivo | Intentos Nodast | Intentos texto plano |
+| Objetivo | Correcto, Nodast | Correcto, Texto plano |
 | --- | ---: | ---: |
-| bind the sum of 1 and 2 | 1 | 1 |
-| define a function that adds 1 to its number argument | 2 y falló (model-error) | 1 |
-| bind x to 1, then return 0 when x is less than 0, otherwise x | 2 | 1 |
-| multiply 3 by 4 | 1 | 1 |
-| define a function of two numbers that returns whether the first is less than the second | 3 y falló (parse) | 2 |
+| bind the sum of 1 and 2 | 3/3 (100%) | 1/3 (33%) |
+| define a function that adds 1 to its number argument | 3/3 (100%) | 3/3 (100%) |
+| bind x to 1, then return 0 when x is less than 0, otherwise x | 3/3 (100%) | 3/3 (100%) |
+| multiply 3 by 4 | 3/3 (100%) | 3/3 (100%) |
+| define a function of two numbers that returns whether the first is less than the second | 3/3 (100%) | 3/3 (100%) |
+| define a function that returns the larger of its two number arguments | 3/3 (100%) | 3/3 (100%) |
+| compute the absolute value of -7 with a conditional | 3/3 (100%) | 3/3 (100%) |
+| define a function that returns 1 when its number argument is zero and 0 otherwise | 3/3 (100%) | 3/3 (100%) |
+| define a function that clamps its number argument between 0 and 10 | 3/3 (100%) | 3/3 (100%) |
+| define a function of three numbers that returns the middle one by value | 2/3 (67%) | 3/3 (100%) |
+| bind double to a function that doubles a number and inc to one that adds 1, then return inc applied to double applied to 5 | 3/3 (100%) | 3/3 (100%) |
+| define a function that takes a function f and returns f applied to 5 | 3/3 (100%) | 3/3 (100%) |
+
+## Editar un archivo existente
+
+Una cadena de `let` donde cada paso suma o resta una constante. Nodast recibe el árbol con un id delante de cada nodo y devuelve `(edits ...)`; se prueba con cada `let` en su línea y con todo en una. El texto plano recibe el TypeScript y devuelve el archivo entero. El oráculo es el valor final del programa ya editado.
+
+### Cadena de 50 `let`
+
+203 nodos. TypeScript: 1250 bytes. Árbol con ids: 2202 bytes por líneas, 2202 en una línea.
+
+|  | Nodast, ids por líneas | Nodast, ids en una línea | Texto plano |
+| --- | ---: | ---: | ---: |
+| Pass@1, válido al primer intento | 9/9 (100%) | 7/9 (78%) | 9/9 (100%) |
+| Válido en ≤ 3 intentos | 9/9 (100%) | 9/9 (100%) | 9/9 (100%) |
+| Correcto en ≤ 3 intentos (oráculo) | 9/9 (100%) | 6/9 (67%) | 8/9 (89%) |
+| Intentos medios | 1.00 | 1.22 | 1.00 |
+| `completion_tokens` medios, todos los intentos | 973 | 792 | 636 |
+| `prompt_tokens` del primer intento | 1573 | 1565 | 801 |
+| Respuesta visible, tokens léxicos medios | 9 | 13 | 357 |
+| Respuesta visible, bytes medios | 28 | 39 | 1246 |
+| Latencia media, todos los intentos | 7446 ms | 7896 ms | 2739 ms |
+| Fallos de API excluidos | 0 | 0 | 0 |
+| Fallos | — | wrong-result ×3 | wrong-result ×1 |
+
+| Objetivo | Correcto, Nodast, ids por líneas | Correcto, Nodast, ids en una línea | Correcto, Texto plano |
+| --- | ---: | ---: | ---: |
+| change the constant 70005 to 7 | 3/3 (100%) | 1/3 (33%) | 3/3 (100%) |
+| change the constant 70044 to 7 | 3/3 (100%) | 2/3 (67%) | 2/3 (67%) |
+| in the binding of v25, subtract instead of add | 3/3 (100%) | 3/3 (100%) | 3/3 (100%) |
+
+### Cadena de 500 `let`
+
+2003 nodos. TypeScript: 13302 bytes. Árbol con ids: 24708 bytes por líneas, 24708 en una línea.
+
+|  | Nodast, ids por líneas | Nodast, ids en una línea | Texto plano |
+| --- | ---: | ---: | ---: |
+| Pass@1, válido al primer intento | 9/9 (100%) | 9/9 (100%) | 9/9 (100%) |
+| Válido en ≤ 3 intentos | 9/9 (100%) | 9/9 (100%) | 9/9 (100%) |
+| Correcto en ≤ 3 intentos (oráculo) | 7/9 (78%) | 6/9 (67%) | 8/9 (89%) |
+| Intentos medios | 1.00 | 1.00 | 1.00 |
+| `completion_tokens` medios, todos los intentos | 637 | 372 | 5726 |
+| `prompt_tokens` del primer intento | 11690 | 11694 | 5748 |
+| Respuesta visible, tokens léxicos medios | 9 | 9 | 3507 |
+| Respuesta visible, bytes medios | 30 | 30 | 13298 |
+| Latencia media, todos los intentos | 6771 ms | 2415 ms | 20652 ms |
+| Fallos de API excluidos | 0 | 0 | 0 |
+| Fallos | wrong-result ×2 | wrong-result ×3 | wrong-result ×1 |
+
+| Objetivo | Correcto, Nodast, ids por líneas | Correcto, Nodast, ids en una línea | Correcto, Texto plano |
+| --- | ---: | ---: | ---: |
+| change the constant 70050 to 7 | 1/3 (33%) | 1/3 (33%) | 3/3 (100%) |
+| change the constant 70440 to 7 | 3/3 (100%) | 3/3 (100%) | 2/3 (67%) |
+| in the binding of v251, subtract instead of add | 3/3 (100%) | 2/3 (67%) | 3/3 (100%) |
 
 ## Payload
+
+Tokens léxicos: identificadores, números, operadores y signos, con el mismo contador en los dos textos. El buffer se compara en bytes.
 
 | Programa | Compacto, bytes / tokens | Buffer, bytes | TypeScript, bytes / tokens |
 | --- | ---: | ---: | ---: |
 | let y suma | 19 / 10 | 97 | 20 / 9 |
 | función de un argumento | 18 / 11 | 82 | 16 / 10 |
 | if con x ligado | 27 / 15 | 142 | 28 / 13 |
+| cadena de 50 let | 1295 / 456 | 3707 | 1250 / 357 |
+| cadena de 500 let | 13797 / 4506 | 38862 | 13302 / 3507 |
 | suma de 8191 nodos | 32761 / 16381 | 146348 | 20477 / 12286 |
-
-## Edición
-
-Cambiar el `1` de `(let x (add 1 2) x)` por `9`. La edición local es la mediana de 10.000 veces. La reescritura es una llamada que pide el archivo entero.
-
-| Vía | Tiempo |
-| --- | ---: |
-| `edit.ts` | 0.009 ms |
-| `edit.rs` | 0.002 ms |
-| Reescribir el archivo con el modelo | 803 ms |

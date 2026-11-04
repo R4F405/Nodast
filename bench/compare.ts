@@ -1,13 +1,44 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { compact, type Layout } from "../src/compact.ts";
+import { stripThink } from "../src/minimax.ts";
+import { parse } from "../src/parse.ts";
+import { print } from "../src/print.ts";
 import { run } from "../src/contract.ts";
-import { GOALS, bush, editMillis, payload, plainVerdict, stripFence } from "./metrics.ts";
+import {
+
+  editTasks,
+  GOALS,
+  bush,
+  chain,
+  expectedAfter,
+  judge,
+  lexicalTokens,
+  payload,
+  plainVerdict,
+  stripFence,
+  type Oracle,
+} from "./metrics.ts";
 
 const ATTEMPTS = 3;
+const API_TRIES = 5;
 
-type Loop = { pass1: boolean; attempts: number; ok: boolean; completionTokens: number | null; error: string | null };
+type Reply = { content: string; completionTokens: number | null; promptTokens: number | null; ms: number };
 
-type Reply = { content: string; completionTokens: number | null };
+type Loop = {
+  infra: boolean;
+  pass1: boolean;
+  valid: boolean;
+  correct: boolean;
+  attempts: number;
+  error: string | null;
+  outTokens: number;
+  replyBytes: number;
+  replyTokens: number;
+  promptTokens: number | null;
+  ms: number;
+};
+
+class InfraError extends Error {}
 
 function loadEnv(path: string): void {
   if (!existsSync(path)) return;
@@ -25,200 +56,350 @@ function loadEnv(path: string): void {
   }
 }
 
-async function ask(prompt: string): Promise<Reply> {
+loadEnv(".env");
+const MODEL = process.env.MINIMAX_MODEL || "MiniMax-M3.1-Flash";
+const BASE = (process.env.MINIMAX_BASE_URL || "https://api.minimax.io/v1").replace(/\/$/, "");
+const RUNS = Number(process.env.BENCH_RUNS || 3);
+const CONCURRENCY = Number(process.env.BENCH_CONCURRENCY || 2);
+const TEMPERATURE = Number(process.env.BENCH_TEMPERATURE || 0.01);
+
+async function askOnce(prompt: string): Promise<Reply> {
   const apiKey = process.env.MINIMAX_API_KEY;
   if (apiKey === undefined || apiKey === "") throw new Error("MINIMAX_API_KEY is missing");
-  const model = process.env.MINIMAX_MODEL || "MiniMax-M3.1-Flash";
-  const base = (process.env.MINIMAX_BASE_URL || "https://api.minimax.io/v1").replace(/\/$/, "");
-  const response = await fetch(`${base}/chat/completions`, {
+  const start = process.hrtime.bigint();
+  const response = await fetch(`${BASE}/chat/completions`, {
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
     body: JSON.stringify({
-      model,
+      model: MODEL,
       messages: [{ role: "user", content: prompt }],
-      max_completion_tokens: 1024,
+      max_completion_tokens: 16384,
       reasoning_effort: "low",
+      temperature: TEMPERATURE,
     }),
   });
-  if (!response.ok) throw new Error(`MiniMax ${response.status}`);
+  if (!response.ok) throw new InfraError(`MiniMax ${response.status} ${(await response.text()).slice(0, 200)}`);
   const body = (await response.json()) as {
     choices?: { message?: { content?: string | null } }[];
-    usage?: { completion_tokens?: number };
+    usage?: { completion_tokens?: number; prompt_tokens?: number };
   };
-  const content = body.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || content.trim() === "") throw new Error("MiniMax returned an empty reply");
-  const completionTokens = body.usage?.completion_tokens;
-  return { content, completionTokens: typeof completionTokens === "number" ? completionTokens : null };
-}
-
-function plainPrompt(goal: string, rejections: { response: string; error: string }[]): string {
-  const lines = ["Reply with only TypeScript that can be executed. No prose.", "", `goal: ${goal}`];
-  for (const rejection of rejections) {
-    lines.push("", "rejected:", rejection.response.trim(), "", "error:", rejection.error);
-  }
-  return `${lines.join("\n")}\n`;
-}
-
-async function nodastLoop(goal: string): Promise<Loop> {
-  const tokens: number[] = [];
-  const result = await run({ goal }, {
-    async complete(prompt: string) {
-      const reply = await ask(prompt);
-      if (reply.completionTokens !== null) tokens.push(reply.completionTokens);
-      return reply.content;
-    },
-  }, { attempts: ATTEMPTS });
-  const completionTokens = tokens.length === 0 ? null : tokens[0] ?? null;
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  const raw = body.choices?.[0]?.message?.content;
+  const content = typeof raw === "string" ? stripThink(raw) : "";
+  if (content.trim() === "") throw new InfraError("MiniMax returned an empty reply");
+  const completion = body.usage?.completion_tokens;
+  const promptTokens = body.usage?.prompt_tokens;
   return {
-    pass1: result.ok && result.attempts === 1,
-    attempts: result.attempts,
-    ok: result.ok,
-    completionTokens,
-    error: result.ok ? null : result.error.code,
+    content,
+    completionTokens: typeof completion === "number" ? completion : null,
+    promptTokens: typeof promptTokens === "number" ? promptTokens : null,
+    ms,
   };
 }
 
-async function plainLoop(goal: string): Promise<Loop> {
-  const rejections: { response: string; error: string }[] = [];
-  let completionTokens: number | null = null;
+async function ask(prompt: string): Promise<Reply> {
+  let last: unknown;
+  for (let attempt = 1; attempt <= API_TRIES; attempt += 1) {
+    try {
+      return await askOnce(prompt);
+    } catch (error) {
+      last = error;
+      const limited = error instanceof Error && error.message.startsWith("MiniMax 429");
+      await new Promise((resolve) => setTimeout(resolve, (limited ? 10_000 : 1000) * attempt));
+    }
+  }
+  const message = last instanceof Error ? last.message : String(last);
+  process.stderr.write(`infra: ${message}\n`);
+  throw new InfraError(message);
+}
+
+function blank(): Loop {
+  return {
+    infra: false,
+    pass1: false,
+    valid: false,
+    correct: false,
+    attempts: 0,
+    error: null,
+    outTokens: 0,
+    replyBytes: 0,
+    replyTokens: 0,
+    promptTokens: null,
+    ms: 0,
+  };
+}
+
+function track(loop: Loop, reply: Reply): void {
+  if (loop.promptTokens === null) loop.promptTokens = reply.promptTokens;
+  loop.outTokens += reply.completionTokens ?? 0;
+  loop.replyBytes += Buffer.byteLength(stripFence(reply.content));
+  loop.replyTokens += lexicalTokens(stripFence(reply.content));
+  loop.ms += reply.ms;
+}
+
+async function nodastLoop(goal: string, oracle: Oracle, program?: string, layout?: Layout): Promise<Loop> {
+  const loop = blank();
+  const result = await run(
+    program === undefined ? { goal } : { goal, program },
+    {
+      async complete(prompt: string) {
+        const reply = await ask(prompt);
+        track(loop, reply);
+        return reply.content;
+      },
+    },
+    layout === undefined ? { attempts: ATTEMPTS } : { attempts: ATTEMPTS, layout },
+  );
+  loop.attempts = result.attempts;
+  if (!result.ok) {
+    loop.infra = result.error.code === "model-error";
+    loop.error = result.error.code;
+    return loop;
+  }
+  loop.valid = true;
+  loop.pass1 = result.attempts === 1;
+  const wrong = judge(result.source, oracle);
+  loop.correct = wrong === null;
+  loop.error = wrong === null ? null : "wrong-result";
+  return loop;
+}
+
+async function plainLoop(prompt: (rejections: string) => string, oracle: Oracle): Promise<Loop> {
+  const loop = blank();
+  let rejections = "";
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    loop.attempts = attempt;
     let reply: Reply;
     try {
-      reply = await ask(plainPrompt(goal, rejections));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      rejections.push({ response: "", error: `model-error ${message}` });
-      return { pass1: false, attempts: attempt, ok: false, completionTokens, error: "model-error" };
+      reply = await ask(prompt(rejections));
+    } catch {
+      loop.infra = true;
+      loop.error = "model-error";
+      return loop;
     }
-    if (attempt === 1) completionTokens = reply.completionTokens;
+    track(loop, reply);
     const verdict = plainVerdict(reply.content);
-    if (verdict.ok) return { pass1: attempt === 1, attempts: attempt, ok: true, completionTokens, error: null };
-    rejections.push({ response: stripFence(reply.content), error: verdict.error });
+    if (verdict.ok) {
+      loop.valid = true;
+      loop.pass1 = attempt === 1;
+      const wrong = judge(reply.content, oracle);
+      loop.correct = wrong === null;
+      loop.error = wrong === null ? null : "wrong-result";
+      return loop;
+    }
+    loop.error = verdict.error.split(" ")[0] ?? "error";
+    rejections += `\nrejected:\n${stripFence(reply.content)}\nerror:\n${verdict.error}\n`;
   }
-  return { pass1: false, attempts: ATTEMPTS, ok: false, completionTokens, error: rejections.at(-1)?.error ?? null };
+  return loop;
 }
 
-function percent(hits: number, total: number): string {
-  if (total === 0) return "0%";
-  return `${Math.round((hits / total) * 100)}%`;
+const RESULT_RULE =
+  "The last statement must be an expression whose value is the result; when the goal asks for a function, the last statement is the function value itself, like ((n: number) => n * 2);. No console output.";
+
+function plainWritePrompt(goal: string): (rejections: string) => string {
+  return (rejections) =>
+    `Reply with only TypeScript that can be executed. No prose.\n${RESULT_RULE}\n\ngoal: ${goal}\n${rejections}${rejections === "" ? "" : "\nReply again with a corrected answer.\n"}`;
 }
 
-function mean(values: number[]): string {
+function plainEditPrompt(goal: string, file: string): (rejections: string) => string {
+  return (rejections) =>
+    `Reply with only the full TypeScript file after the change. No prose.\nKeep the last statement as the expression whose value is the result.\n\ngoal: ${goal}\n\nfile:\n${file}${rejections}${rejections === "" ? "" : "\nReply again with a corrected answer.\n"}`;
+}
+
+async function pool<T>(jobs: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const results: T[] = new Array(jobs.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      const job = jobs[index];
+      if (job === undefined) return;
+      results[index] = await job();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, limit) }, worker));
+  return results;
+}
+
+type Column = { name: string; loops: Loop[] };
+
+type Group = Map<string, Loop[]>;
+
+function push(groups: Group[], index: number, side: string, loop: Loop): void {
+  const group = groups[index];
+  if (group === undefined) return;
+  const list = group.get(side) ?? [];
+  list.push(loop);
+  group.set(side, list);
+}
+
+async function writeBench(): Promise<Group[]> {
+  const jobs: Array<() => Promise<{ index: number; side: string; loop: Loop }>> = [];
+  GOALS.forEach((item, index) => {
+    for (let r = 0; r < RUNS; r += 1) {
+      jobs.push(async () => ({ index, side: "Nodast", loop: await nodastLoop(item.goal, item.oracle) }));
+      jobs.push(async () => ({ index, side: "Texto plano", loop: await plainLoop(plainWritePrompt(item.goal), item.oracle) }));
+    }
+  });
+  const groups: Group[] = GOALS.map(() => new Map());
+  for (const item of await pool(jobs, CONCURRENCY)) push(groups, item.index, item.side, item.loop);
+  return groups;
+}
+
+const EDIT_SIDES = ["Nodast, ids por líneas", "Nodast, ids en una línea", "Texto plano"] as const;
+
+async function editBench(length: number): Promise<Group[]> {
+  const source = chain(length);
+  const parsed = parse(source);
+  if (!parsed.ok) throw new Error(parsed.error.message);
+  const file = print(parsed.tree);
+  const tasks = editTasks(length);
+  const jobs: Array<() => Promise<{ index: number; side: string; loop: Loop }>> = [];
+  tasks.forEach((task, index) => {
+    const oracle: Oracle = { value: expectedAfter(task, source) };
+    for (let r = 0; r < RUNS; r += 1) {
+      jobs.push(async () => ({ index, side: EDIT_SIDES[0], loop: await nodastLoop(task.goal, oracle, source, "lines") }));
+      jobs.push(async () => ({ index, side: EDIT_SIDES[1], loop: await nodastLoop(task.goal, oracle, source, "inline") }));
+      jobs.push(async () => ({ index, side: EDIT_SIDES[2], loop: await plainLoop(plainEditPrompt(task.goal, file), oracle) }));
+    }
+  });
+  const groups: Group[] = tasks.map(() => new Map());
+  for (const item of await pool(jobs, CONCURRENCY)) push(groups, item.index, item.side, item.loop);
+  return groups;
+}
+
+function counted(loops: Loop[]): Loop[] {
+  return loops.filter((loop) => !loop.infra);
+}
+
+function rate(loops: Loop[], pick: (loop: Loop) => boolean): string {
+  const real = counted(loops);
+  if (real.length === 0) return "—";
+  const hits = real.filter(pick).length;
+  return `${hits}/${real.length} (${Math.round((hits / real.length) * 100)}%)`;
+}
+
+function avg(loops: Loop[], pick: (loop: Loop) => number | null, digits = 0): string {
+  const values = counted(loops)
+    .map(pick)
+    .filter((value): value is number => value !== null);
   if (values.length === 0) return "—";
-  return (values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1);
+  return (values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(digits);
 }
 
-function meanTokens(values: Array<number | null>): string {
-  const present = values.filter((value): value is number => value !== null);
-  if (present.length === 0) return "—";
-  return (present.reduce((sum, value) => sum + value, 0) / present.length).toFixed(0);
+function errors(loops: Loop[]): string {
+  const counts = new Map<string, number>();
+  for (const loop of loops) {
+    if (loop.correct) continue;
+    const key = loop.error ?? "unknown";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  if (counts.size === 0) return "—";
+  return [...counts].map(([key, count]) => `${key} ×${count}`).join(", ");
 }
 
-function rustEditMs(): number {
-  const result = spawnSync(
-    "cargo",
-    ["run", "--release", "--manifest-path", "rust/Cargo.toml", "--bin", "bench", "--", "--edit"],
-    { encoding: "utf8" },
-  );
-  if (result.stderr !== "") process.stderr.write(result.stderr);
-  if (result.status !== 0) throw new Error("rust edit bench failed");
-  const line = result.stdout.split(/\r?\n/).find((item) => item.startsWith("edit_ns "));
-  const ns = Number(line?.slice("edit_ns ".length));
-  if (!Number.isFinite(ns)) throw new Error(`missing edit time: ${result.stdout}`);
-  return ns / 1e6;
+function columns(groups: Group[], sides: readonly string[]): Column[] {
+  return sides.map((name) => ({ name, loops: groups.flatMap((group) => group.get(name) ?? []) }));
 }
 
-async function rewriteMs(): Promise<{ ms: number; tokens: number | null }> {
-  const start = process.hrtime.bigint();
-  const reply = await ask(
-    "Reply with only the full TypeScript file. No prose.\nReplace the number 1 with 9. Rewrite the whole file.\n\nconst x = 1 + 2;\nx;\n",
-  );
-  const ms = Number(process.hrtime.bigint() - start) / 1e6;
-  if (!reply.content.includes("9")) process.stderr.write("rewrite reply did not contain 9\n");
-  return { ms, tokens: reply.completionTokens };
+function table(header: string[], rows: string[][]): string {
+  const align = header.map((_, index) => (index === 0 ? "---" : "---:"));
+  return [`| ${header.join(" | ")} |`, `| ${align.join(" | ")} |`, ...rows.map((row) => `| ${row.join(" | ")} |`)].join("\n");
 }
 
-loadEnv(".env");
-const modelName = process.env.MINIMAX_MODEL || "MiniMax-M3.1-Flash";
+function summary(cols: Column[], withPrompt: boolean): string {
+  const row = (label: string, cell: (loops: Loop[]) => string): string[] => [label, ...cols.map((col) => cell(col.loops))];
+  const rows = [
+    row("Pass@1, válido al primer intento", (l) => rate(l, (x) => x.pass1)),
+    row(`Válido en ≤ ${ATTEMPTS} intentos`, (l) => rate(l, (x) => x.valid)),
+    row(`Correcto en ≤ ${ATTEMPTS} intentos (oráculo)`, (l) => rate(l, (x) => x.correct)),
+    row("Intentos medios", (l) => avg(l, (x) => x.attempts, 2)),
+    row("`completion_tokens` medios, todos los intentos", (l) => avg(l, (x) => x.outTokens)),
+    ...(withPrompt ? [row("`prompt_tokens` del primer intento", (l) => avg(l, (x) => x.promptTokens))] : []),
+    row("Respuesta visible, tokens léxicos medios", (l) => avg(l, (x) => x.replyTokens)),
+    row("Respuesta visible, bytes medios", (l) => avg(l, (x) => x.replyBytes)),
+    row("Latencia media, todos los intentos", (l) => `${avg(l, (x) => x.ms)} ms`),
+    row("Fallos de API excluidos", (l) => String(l.filter((x) => x.infra).length)),
+    row("Fallos", errors),
+  ];
+  return table(["", ...cols.map((col) => col.name)], rows);
+}
+
+function perItem(labels: readonly string[], groups: Group[], sides: readonly string[]): string {
+  const rows = groups.map((group, index) => [
+    labels[index] ?? "",
+    ...sides.map((side) => rate(group.get(side) ?? [], (x) => x.correct)),
+  ]);
+  return table(["Objetivo", ...sides.map((side) => `Correcto, ${side}`)], rows);
+}
+
+const SIZES = (process.env.BENCH_SIZES || "50,500").split(",").map((item) => Number(item.trim()));
+
+process.stderr.write(`write bench: ${GOALS.length} goals × ${RUNS} runs\n`);
+const written = await writeBench();
+const editSections: string[] = [];
+for (const length of SIZES) {
+  process.stderr.write(`edit bench: chain ${length}, ${editTasks(length).length} tasks × ${RUNS} runs\n`);
+  const groups = await editBench(length);
+  const parsed = parse(chain(length));
+  if (!parsed.ok) throw new Error(parsed.error.message);
+  const tsBytes = Buffer.byteLength(print(parsed.tree));
+  const linesBytes = Buffer.byteLength(compact(parsed.tree, { ids: true, layout: "lines" }));
+  const inlineBytes = Buffer.byteLength(compact(parsed.tree, { ids: true }));
+  editSections.push(`### Cadena de ${length} \`let\`
+
+${length * 4 + 3} nodos. TypeScript: ${tsBytes} bytes. Árbol con ids: ${linesBytes} bytes por líneas, ${inlineBytes} en una línea.
+
+${summary(columns(groups, EDIT_SIDES), true)}
+
+${perItem(editTasks(length).map((task) => task.goal), groups, EDIT_SIDES)}`);
+}
+
 const samples = [
-  payload("(let x (add 1 2) x)"),
-  payload("(fn (x) (add x 1))"),
-  payload("(let x 1 (if (lt x 0) 0 x))"),
-  payload(bush(12)),
-];
-const labels = ["let y suma", "función de un argumento", "if con x ligado", "suma de 8191 nodos"];
+  ["let y suma", payload("(let x (add 1 2) x)")],
+  ["función de un argumento", payload("(fn (x) (add x 1))")],
+  ["if con x ligado", payload("(let x 1 (if (lt x 0) 0 x))")],
+  ...SIZES.map((length) => [`cadena de ${length} let`, payload(chain(length))] as const),
+  ["suma de 8191 nodos", payload(bush(12))],
+] as const;
 
-const tsEdit = editMillis();
-const rustEdit = rustEditMs();
+const payloadRows = samples.map(
+  ([label, sample]) =>
+    `| ${label} | ${sample.compactBytes} / ${sample.compactTokens} | ${sample.bufferBytes} | ${sample.printedBytes} / ${sample.printedTokens} |`,
+);
 
-const nodast: Loop[] = [];
-const plain: Loop[] = [];
-for (const goal of GOALS) {
-  process.stderr.write(`nodast ${goal}\n`);
-  nodast.push(await nodastLoop(goal));
-  process.stderr.write(`plain ${goal}\n`);
-  plain.push(await plainLoop(goal));
-}
-process.stderr.write("rewrite\n");
-const rewrite = await rewriteMs();
-
-const nodastPass = nodast.filter((item) => item.pass1).length;
-const plainPass = plain.filter((item) => item.pass1).length;
-const nodastFixed = nodast.filter((item) => item.ok).length;
-const plainFixed = plain.filter((item) => item.ok).length;
-const nodastRetries = nodast.filter((item) => item.ok && !item.pass1).map((item) => item.attempts - 1);
-const plainRetries = plain.filter((item) => item.ok && !item.pass1).map((item) => item.attempts - 1);
-
-const rows = GOALS.map((goal, index) => {
-  const left = nodast[index];
-  const right = plain[index];
-  if (left === undefined || right === undefined) throw new Error("missing sample");
-  const leftCell = left.ok ? String(left.attempts) : `${left.attempts} y falló (${left.error})`;
-  const rightCell = right.ok ? String(right.attempts) : `${right.attempts} y falló (${right.error})`;
-  return `| ${goal} | ${leftCell} | ${rightCell} |`;
-});
-
-const payloadRows = samples.map((sample, index) => {
-  const label = labels[index] ?? "programa";
-  return `| ${label} | ${sample.compactBytes} / ${sample.compactTokens} | ${sample.bufferBytes} | ${sample.printedBytes} / ${sample.printedTokens} |`;
-});
+const WRITE_SIDES = ["Nodast", "Texto plano"] as const;
 
 const markdown = `# Medición
 
-Cuatro números, el ${new Date().toISOString().slice(0, 10)}, con ${modelName}, ${GOALS.length} objetivos y tope de ${ATTEMPTS} intentos. \`pnpm bench\` repite la pasada y llama a MiniMax. La velocidad interna del motor está aparte, en [bench/engine.md](bench/engine.md).
+Una pasada el ${new Date().toISOString().slice(0, 10)} con ${MODEL}, temperatura ${TEMPERATURE}, ${RUNS} repeticiones por objetivo y tope de ${ATTEMPTS} intentos. \`pnpm bench\` la repite y llama a MiniMax. \`BENCH_RUNS\`, \`BENCH_SIZES\`, \`BENCH_CONCURRENCY\` y \`BENCH_TEMPERATURE\` la ajustan. La velocidad interna del motor está aparte, en [bench/engine.md](bench/engine.md).
 
-Los tokens del texto son léxicos: identificadores, números, operadores y signos, con el mismo contador en los dos textos. El buffer no es un flujo de tokens; se compara en bytes. Los tokens de respuesta, cuando MiniMax los informa, son \`completion_tokens\` de la primera respuesta.
+Válido: Nodast parsea y pasa \`check\`; el texto plano sale de \`tsc\` sin error y corre. Correcto: además, el valor de la última expresión coincide con el oráculo del objetivo, o la función que devuelve da lo esperado con varias entradas. Los dos lados reintentan solo por errores estructurales; el oráculo no se le enseña al modelo.
 
-## Validez estructural
+El bloque \`<think>\` que MiniMax mete en \`content\` se quita antes de juzgar. Un fallo de API, tras ${API_TRIES} reintentos de red, no cuenta como fallo del formato: se excluye y se informa aparte. \`completion_tokens\` incluye el razonamiento del modelo; la respuesta visible se cuenta aparte con el contador léxico.
 
-Pass@1 es la primera respuesta. Nodast tiene que parsear y pasar \`check\`. El texto plano tiene que salir de \`tsc\` sin error y correr sin \`SyntaxError\` ni \`TypeError\`.
+## Escribir desde cero
 
-| | Nodast | Texto plano |
-| --- | ---: | ---: |
-| Pass@1 | ${nodastPass}/${GOALS.length} (${percent(nodastPass, GOALS.length)}) | ${plainPass}/${GOALS.length} (${percent(plainPass, GOALS.length)}) |
-| Aciertos en ≤ ${ATTEMPTS} intentos | ${nodastFixed}/${GOALS.length} (${percent(nodastFixed, GOALS.length)}) | ${plainFixed}/${GOALS.length} (${percent(plainFixed, GOALS.length)}) |
-| Reintentos medios tras el primer fallo, solo si luego acierta | ${mean(nodastRetries)} | ${mean(plainRetries)} |
-| Tokens medios de la primera respuesta | ${meanTokens(nodast.map((item) => item.completionTokens))} | ${meanTokens(plain.map((item) => item.completionTokens))} |
+${GOALS.length} objetivos × ${RUNS} repeticiones.
 
-| Objetivo | Intentos Nodast | Intentos texto plano |
-| --- | ---: | ---: |
-${rows.join("\n")}
+${summary(columns(written, WRITE_SIDES), false)}
+
+${perItem(GOALS.map((goal) => goal.goal), written, WRITE_SIDES)}
+
+## Editar un archivo existente
+
+Una cadena de \`let\` donde cada paso suma o resta una constante. Nodast recibe el árbol con un id delante de cada nodo y devuelve \`(edits ...)\`; se prueba con cada \`let\` en su línea y con todo en una. El texto plano recibe el TypeScript y devuelve el archivo entero. El oráculo es el valor final del programa ya editado.
+
+${editSections.join("\n\n")}
 
 ## Payload
+
+Tokens léxicos: identificadores, números, operadores y signos, con el mismo contador en los dos textos. El buffer se compara en bytes.
 
 | Programa | Compacto, bytes / tokens | Buffer, bytes | TypeScript, bytes / tokens |
 | --- | ---: | ---: | ---: |
 ${payloadRows.join("\n")}
-
-## Edición
-
-Cambiar el \`1\` de \`(let x (add 1 2) x)\` por \`9\`. La edición local es la mediana de 10.000 veces. La reescritura es una llamada que pide el archivo entero.
-
-| Vía | Tiempo |
-| --- | ---: |
-| \`edit.ts\` | ${tsEdit.toFixed(3)} ms |
-| \`edit.rs\` | ${rustEdit.toFixed(3)} ms |
-| Reescribir el archivo con el modelo | ${rewrite.ms.toFixed(0)} ms |
 `;
 
 writeFileSync("BENCH.md", markdown);

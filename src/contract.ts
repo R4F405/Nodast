@@ -1,4 +1,5 @@
 import { check, type CheckError } from "./check.ts";
+import { compact, findNode, snippet, type Layout } from "./compact.ts";
 import { applyEdits, type Edit, type EditError } from "./edit.ts";
 import type { Expr, SourcePosition } from "./ir.ts";
 import { parse } from "./parse.ts";
@@ -39,9 +40,10 @@ const DEFAULT_ATTEMPTS = 3;
 export async function run(
   input: RunInput,
   model: Model,
-  options?: { attempts?: number },
+  options?: { attempts?: number; layout?: Layout },
 ): Promise<RunResult> {
   const attempts = options?.attempts ?? DEFAULT_ATTEMPTS;
+  const layout = options?.layout ?? "lines";
   const loaded = loadProgram(input.program);
   if (!loaded.ok) return { ok: false, attempts: 0, error: loaded.error };
 
@@ -50,7 +52,7 @@ export async function run(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let reply: string;
     try {
-      reply = await model.complete(renderPrompt(input.goal, input.program, rejections));
+      reply = await model.complete(renderPrompt(input.goal, loaded.tree, rejections, layout));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { ok: false, attempts: attempt, error: { code: "model-error", message } };
@@ -58,7 +60,7 @@ export async function run(
     const outcome = accept(loaded.tree, reply);
     if (outcome.ok) return { ok: true, attempts: attempt, source: outcome.source };
     last = outcome.error;
-    rejections.push({ response: stripFence(reply), error: errorLine(outcome.error) });
+    rejections.push({ response: stripFence(reply), error: errorLine(outcome.error, outcome.tree) });
   }
   return { ok: false, attempts, error: last };
 }
@@ -95,7 +97,9 @@ function loadProgram(program: string | undefined): { ok: true; tree: Expr | unde
   return { ok: true, tree: parsed.tree };
 }
 
-function accept(tree: Expr | undefined, reply: string): { ok: true; source: string } | { ok: false; error: ContractError } {
+type Outcome = { ok: true; source: string } | { ok: false; error: ContractError; tree?: Expr };
+
+function accept(tree: Expr | undefined, reply: string): Outcome {
   const text = stripFence(reply);
   if (text === "") return { ok: false, error: { code: "empty-response" } };
   if (tree === undefined) {
@@ -113,7 +117,7 @@ function accept(tree: Expr | undefined, reply: string): { ok: true; source: stri
       };
     }
     const checked = check(parsed.tree);
-    if (!checked.ok) return { ok: false, error: checked.error };
+    if (!checked.ok) return { ok: false, error: checked.error, tree: parsed.tree };
     return { ok: true, source: print(parsed.tree) };
   }
   if (leadingName(text) !== "edits") return { ok: false, error: { code: "expected-edits" } };
@@ -122,7 +126,7 @@ function accept(tree: Expr | undefined, reply: string): { ok: true; source: stri
   const applied = applyAll(tree, edits.edits);
   if (!applied.ok) return applied;
   const checked = check(applied.tree);
-  if (!checked.ok) return { ok: false, error: checked.error };
+  if (!checked.ok) return { ok: false, error: checked.error, tree: applied.tree };
   return { ok: true, source: print(applied.tree) };
 }
 
@@ -146,30 +150,61 @@ function prepare(tree: Expr, edit: RawEdit): Edit {
   return { op: "insert", id: edit.id, index: edit.index, node };
 }
 
-function renderPrompt(goal: string, program: string | undefined, rejections: readonly Rejection[]): string {
+const LANGUAGE = [
+  "Reply with only one program, or one (edits ...) list. No prose, no code fences.",
+  "",
+  "language:",
+  "number: 0 12 -4    bool: true false    name: x total_2",
+  "(let name value body)    bind name to value, visible only inside body",
+  "(fn (a b) body)          function; parameters are bare names, no types",
+  "(if cond then else)",
+  "(add a b) (sub a b) (mul a b) (div a b)    numbers to number",
+  "(eq a b) (lt a b) (gt a b) (lte a b) (gte a b)    numbers to bool",
+  "(f a b)                  call f with a and b",
+  "Each form takes exactly the arguments shown. There are no infix operators and no other keywords.",
+  "",
+  "edits, only when a program is given:",
+  "(edits (replace id expr) (insert id index expr) (delete id))",
+  "Each node of the given program is prefixed with its id, like n4:3. Ids never appear inside expr.",
+  "replace swaps any node. insert adds an argument to the call with that id. delete removes that call argument.",
+  "",
+  "examples:",
+  "goal: bind the difference of 8 and 3",
+  "program: none",
+  "(let x (sub 8 3) x)",
+  "",
+  "goal: define a function that doubles its argument",
+  "program: none",
+  "(fn (n) (mul n 2))",
+  "",
+  "goal: change 3 to 5",
+  "program: n1:(let x n2:(sub n3:8 n4:3) n5:x)",
+  "(edits (replace n4 5))",
+];
+
+function renderPrompt(goal: string, program: Expr | undefined, rejections: readonly Rejection[], layout: Layout): string {
+  const shown = program === undefined ? "none" : compact(program, { ids: true, layout });
   const lines = [
-    "Reply with only one program, or one (edits ...) list. No prose.",
-    "",
-    "(edits (replace id expr) (insert id index expr) (delete id))",
-    "",
-    "example:",
-    "goal: bind the difference of 8 and 3",
-    "program:",
-    "none",
-    "(let x (sub 8 3) x)",
+    ...LANGUAGE,
     "",
     `goal: ${goal.replace(/\s+/g, " ").trim()}`,
-    "",
-    "program:",
-    program ?? "none",
+    shown.includes("\n") ? `program:\n${shown}` : `program: ${shown}`,
   ];
   for (const rejection of rejections) {
-    lines.push("rejected:", rejection.response.trim(), "", "error:", rejection.error);
+    lines.push("", "rejected:", rejection.response.trim(), "error:", rejection.error);
   }
+  if (rejections.length > 0) lines.push("", "Reply again with a corrected answer.");
   return `${lines.join("\n")}\n`;
 }
 
-function errorLine(error: ContractError): string {
+function errorLine(error: ContractError, tree?: Expr): string {
+  const base = baseLine(error);
+  if (tree === undefined || !("nodeId" in error)) return base;
+  const node = findNode(tree, error.nodeId);
+  return node === undefined ? base : `${base} in ${snippet(node)}`;
+}
+
+function baseLine(error: ContractError): string {
   switch (error.code) {
     case "empty-response":
       return "empty-response";

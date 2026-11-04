@@ -33,11 +33,21 @@ export function minimax(options: MiniMaxOptions): Model {
       const body = (await response.json()) as {
         choices?: { message?: { content?: string | null } }[];
       };
-      const content = body.choices?.[0]?.message?.content;
-      if (typeof content !== "string" || content.trim() === "") throw new Error("MiniMax returned an empty reply");
+      const raw = body.choices?.[0]?.message?.content;
+      const content = typeof raw === "string" ? stripThink(raw) : "";
+      if (content.trim() === "") throw new Error("MiniMax returned an empty reply");
       return content;
     },
   };
+}
+
+// MiniMax puts its reasoning inside content as <think>...</think>. An unclosed block means the reply was cut.
+export function stripThink(text: string): string {
+  const open = text.indexOf("<think>");
+  if (open === -1) return text;
+  const close = text.indexOf("</think>", open);
+  if (close === -1) return text.slice(0, open);
+  return stripThink(text.slice(0, open) + text.slice(close + "</think>".length));
 }
 
 export function minimaxFromEnv(env: NodeJS.ProcessEnv = process.env, fetchImpl?: typeof fetch): Model {

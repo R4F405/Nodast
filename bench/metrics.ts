@@ -2,13 +2,130 @@ import vm from "node:vm";
 import ts from "typescript";
 import { applyEdits, encode, parse, print, type Expr } from "../src/index.ts";
 
-export const GOALS = [
-  "bind the sum of 1 and 2",
-  "define a function that adds 1 to its number argument",
-  "bind x to 1, then return 0 when x is less than 0, otherwise x",
-  "multiply 3 by 4",
-  "define a function of two numbers that returns whether the first is less than the second",
-] as const;
+export type Oracle =
+  | { value: number | boolean }
+  | { calls: Array<[readonly unknown[], number | boolean]> };
+
+export type Goal = { goal: string; oracle: Oracle };
+
+export const GOALS: readonly Goal[] = [
+  { goal: "bind the sum of 1 and 2", oracle: { value: 3 } },
+  { goal: "define a function that adds 1 to its number argument", oracle: { calls: [[[5], 6], [[-1], 0]] } },
+  { goal: "bind x to 1, then return 0 when x is less than 0, otherwise x", oracle: { value: 1 } },
+  { goal: "multiply 3 by 4", oracle: { value: 12 } },
+  {
+    goal: "define a function of two numbers that returns whether the first is less than the second",
+    oracle: { calls: [[[1, 2], true], [[2, 1], false], [[2, 2], false]] },
+  },
+  {
+    goal: "define a function that returns the larger of its two number arguments",
+    oracle: { calls: [[[1, 2], 2], [[5, 3], 5], [[4, 4], 4]] },
+  },
+  { goal: "compute the absolute value of -7 with a conditional", oracle: { value: 7 } },
+  {
+    goal: "define a function that returns 1 when its number argument is zero and 0 otherwise",
+    oracle: { calls: [[[0], 1], [[3], 0], [[-2], 0]] },
+  },
+  {
+    goal: "define a function that clamps its number argument between 0 and 10",
+    oracle: { calls: [[[-5], 0], [[5], 5], [[15], 10]] },
+  },
+  {
+    goal: "define a function of three numbers that returns the middle one by value",
+    oracle: { calls: [[[1, 2, 3], 2], [[3, 1, 2], 2], [[2, 3, 1], 2], [[5, 5, 1], 5]] },
+  },
+  {
+    goal: "bind double to a function that doubles a number and inc to one that adds 1, then return inc applied to double applied to 5",
+    oracle: { value: 11 },
+  },
+  {
+    goal: "define a function that takes a function f and returns f applied to 5",
+    oracle: { calls: [[[(n: number) => n * 2], 10], [[(n: number) => n - 1], 4]] },
+  },
+];
+
+export type EditTask = { goal: string; from: string; to: string };
+
+// Constants start far above any node id, so a constant never reads like an id.
+const BASE = 70_000;
+
+export function chain(length: number): string {
+  let body = `v${length}`;
+  for (let i = length; i >= 1; i -= 1) {
+    body = `(let v${i} (${opAt(i)} v${i - 1} ${BASE + i}) ${body})`;
+  }
+  return `(let v0 5 ${body})`;
+}
+
+export function editTasks(length: number): EditTask[] {
+  const early = Math.max(1, Math.floor(length * 0.1));
+  const late = Math.max(1, Math.floor(length * 0.88));
+  let middle = Math.floor(length / 2);
+  if (opAt(middle) !== "add") middle += 1;
+  const constant = (i: number): EditTask => ({
+    goal: `change the constant ${BASE + i} to 7`,
+    from: `(let v${i} (${opAt(i)} v${i - 1} ${BASE + i})`,
+    to: `(let v${i} (${opAt(i)} v${i - 1} 7)`,
+  });
+  return [
+    constant(early),
+    constant(late),
+    {
+      goal: `in the binding of v${middle}, subtract instead of add`,
+      from: `(let v${middle} (add v${middle - 1} ${BASE + middle})`,
+      to: `(let v${middle} (sub v${middle - 1} ${BASE + middle})`,
+    },
+  ];
+}
+
+function opAt(i: number): "add" | "sub" {
+  return i % 2 === 1 ? "add" : "sub";
+}
+
+export function expectedAfter(task: EditTask, source: string): number | boolean {
+  if (!source.includes(task.from)) throw new Error(`task does not match: ${task.goal}`);
+  const parsed = parse(source.replace(task.from, task.to));
+  if (!parsed.ok) throw new Error(parsed.error.message);
+  const value = evaluate(print(parsed.tree));
+  if (!value.ok) throw new Error(value.error);
+  if (typeof value.value !== "number" && typeof value.value !== "boolean") throw new Error("expected a primitive");
+  return value.value;
+}
+
+export function evaluate(source: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  const code = stripFence(source);
+  const js = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  try {
+    const sandbox = { console: { log() {}, info() {}, error() {} } };
+    return { ok: true, value: vm.runInNewContext(js, sandbox, { timeout: 500 }) as unknown };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? `${error.name} ${error.message}` : String(error) };
+  }
+}
+
+export function judge(source: string, oracle: Oracle): string | null {
+  const result = evaluate(source);
+  if (!result.ok) return result.error;
+  const value = result.value;
+  if ("value" in oracle) {
+    return Object.is(value, oracle.value) ? null : `expected ${String(oracle.value)} got ${describe(value)}`;
+  }
+  if (typeof value !== "function") return `expected a function got ${describe(value)}`;
+  for (const [args, want] of oracle.calls) {
+    let got: unknown;
+    try {
+      got = (value as (...items: unknown[]) => unknown)(...args);
+    } catch (error) {
+      return `call (${args.join(", ")}) threw ${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (!Object.is(got, want)) return `call (${args.join(", ")}) expected ${String(want)} got ${describe(got)}`;
+  }
+  return null;
+}
+
+function describe(value: unknown): string {
+  return typeof value === "function" ? "a function" : String(value);
+}
 
 export function lexicalTokens(text: string): number {
   return text.match(/[A-Za-z_][A-Za-z0-9_]*|===|=>|<=|>=|==|&&|\|\||\d+|\S/g)?.length ?? 0;
