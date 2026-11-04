@@ -4,35 +4,36 @@ import { applyEdits, encode, parse, print, type Expr } from "../src/index.ts";
 
 export type Oracle =
   | { value: number | boolean }
-  | { calls: Array<[readonly unknown[], number | boolean]> };
+  // Each call gives the arguments as JavaScript source, so they are built inside the sandbox.
+  | { calls: Array<[string, number | boolean]> };
 
 export type Goal = { goal: string; oracle: Oracle };
 
 export const GOALS: readonly Goal[] = [
   { goal: "bind the sum of 1 and 2", oracle: { value: 3 } },
-  { goal: "define a function that adds 1 to its number argument", oracle: { calls: [[[5], 6], [[-1], 0]] } },
+  { goal: "define a function that adds 1 to its number argument", oracle: { calls: [["5", 6], ["-1", 0]] } },
   { goal: "bind x to 1, then return 0 when x is less than 0, otherwise x", oracle: { value: 1 } },
   { goal: "multiply 3 by 4", oracle: { value: 12 } },
   {
     goal: "define a function of two numbers that returns whether the first is less than the second",
-    oracle: { calls: [[[1, 2], true], [[2, 1], false], [[2, 2], false]] },
+    oracle: { calls: [["1, 2", true], ["2, 1", false], ["2, 2", false]] },
   },
   {
     goal: "define a function that returns the larger of its two number arguments",
-    oracle: { calls: [[[1, 2], 2], [[5, 3], 5], [[4, 4], 4]] },
+    oracle: { calls: [["1, 2", 2], ["5, 3", 5], ["4, 4", 4]] },
   },
   { goal: "compute the absolute value of -7 with a conditional", oracle: { value: 7 } },
   {
     goal: "define a function that returns 1 when its number argument is zero and 0 otherwise",
-    oracle: { calls: [[[0], 1], [[3], 0], [[-2], 0]] },
+    oracle: { calls: [["0", 1], ["3", 0], ["-2", 0]] },
   },
   {
     goal: "define a function that clamps its number argument between 0 and 10",
-    oracle: { calls: [[[-5], 0], [[5], 5], [[15], 10]] },
+    oracle: { calls: [["-5", 0], ["5", 5], ["15", 10]] },
   },
   {
     goal: "define a function of three numbers that returns the middle one by value",
-    oracle: { calls: [[[1, 2, 3], 2], [[3, 1, 2], 2], [[2, 3, 1], 2], [[5, 5, 1], 5]] },
+    oracle: { calls: [["1, 2, 3", 2], ["3, 1, 2", 2], ["2, 3, 1", 2], ["5, 5, 1", 5]] },
   },
   {
     goal: "bind double to a function that doubles a number and inc to one that adds 1, then return inc applied to double applied to 5",
@@ -40,7 +41,7 @@ export const GOALS: readonly Goal[] = [
   },
   {
     goal: "define a function that takes a function f and returns f applied to 5",
-    oracle: { calls: [[[(n: number) => n * 2], 10], [[(n: number) => n - 1], 4]] },
+    oracle: { calls: [["(n) => n * 2", 10], ["(n) => n - 1", 4]] },
   },
 ];
 
@@ -88,43 +89,82 @@ export function expectedAfter(task: EditTask, source: string): number | boolean 
   if (!parsed.ok) throw new Error(parsed.error.message);
   const value = evaluate(print(parsed.tree));
   if (!value.ok) throw new Error(value.error);
-  if (typeof value.value !== "number" && typeof value.value !== "boolean") throw new Error("expected a primitive");
-  return value.value;
+  if (value.kind === "number") return Number(value.text);
+  if (value.kind === "boolean") return value.text === "true";
+  throw new Error("expected a primitive");
 }
 
-export function evaluate(source: string): { ok: true; value: unknown } | { ok: false; error: string } {
-  const code = stripFence(source);
-  const js = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+// Model output runs in a context with no host objects, no eval and a timeout on every step.
+// The host never calls into guest values: each probe is guest code that returns a JSON string.
+// node:vm is not a security boundary; this only keeps model replies away from host objects.
+const TIMEOUT_MS = 500;
+
+type Guest = { ok: true; ctx: vm.Context } | { ok: false; error: string };
+
+function runGuest(js: string): Guest {
+  const ctx = vm.createContext(Object.create(null) as object, {
+    codeGeneration: { strings: false, wasm: false },
+    microtaskMode: "afterEvaluate",
+  });
+  vm.runInContext("globalThis.console = { log() {}, info() {}, warn() {}, error() {} };", ctx);
   try {
-    const sandbox = { console: { log() {}, info() {}, error() {} } };
-    return { ok: true, value: vm.runInNewContext(js, sandbox, { timeout: 500 }) as unknown };
+    (ctx as Record<string, unknown>).__value = vm.runInContext(js, ctx, { timeout: TIMEOUT_MS });
+    return { ok: true, ctx };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? `${error.name} ${error.message}` : String(error) };
+    (ctx as Record<string, unknown>).__error = error;
+    const text = probe(ctx, "String(__error && __error.name) + ' ' + String(__error && __error.message)");
+    return { ok: false, error: text ?? "Error unknown" };
   }
+}
+
+function probe(ctx: vm.Context, expression: string): string | null {
+  try {
+    const out: unknown = vm.runInContext(`(() => { try { return String(${expression}); } catch { return "probe failed"; } })()`, ctx, {
+      timeout: TIMEOUT_MS,
+    });
+    return typeof out === "string" ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+const DESCRIBE = "(typeof __v === 'function' ? 'a function' : JSON.stringify([typeof __v, String(__v)]))";
+
+function describeIn(ctx: vm.Context, value: string): { kind: string; text: string } {
+  const out = probe(ctx, `((__v) => ${DESCRIBE})(${value})`);
+  if (out === null) return { kind: "error", text: "timeout" };
+  if (out === "a function") return { kind: "function", text: "a function" };
+  try {
+    const [kind, text] = JSON.parse(out) as [string, string];
+    return { kind, text };
+  } catch {
+    return { kind: "error", text: out };
+  }
+}
+
+function same(got: { kind: string; text: string }, want: number | boolean): boolean {
+  return got.kind === typeof want && got.text === String(want);
+}
+
+export function evaluate(source: string): { ok: true; kind: string; text: string } | { ok: false; error: string } {
+  const js = ts.transpileModule(stripFence(source), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const guest = runGuest(js);
+  if (!guest.ok) return guest;
+  return { ok: true, ...describeIn(guest.ctx, "__value") };
 }
 
 export function judge(source: string, oracle: Oracle): string | null {
-  const result = evaluate(source);
-  if (!result.ok) return result.error;
-  const value = result.value;
-  if ("value" in oracle) {
-    return Object.is(value, oracle.value) ? null : `expected ${String(oracle.value)} got ${describe(value)}`;
-  }
-  if (typeof value !== "function") return `expected a function got ${describe(value)}`;
+  const js = ts.transpileModule(stripFence(source), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const guest = runGuest(js);
+  if (!guest.ok) return guest.error;
+  const value = describeIn(guest.ctx, "__value");
+  if ("value" in oracle) return same(value, oracle.value) ? null : `expected ${String(oracle.value)} got ${value.text}`;
+  if (value.kind !== "function") return `expected a function got ${value.text}`;
   for (const [args, want] of oracle.calls) {
-    let got: unknown;
-    try {
-      got = (value as (...items: unknown[]) => unknown)(...args);
-    } catch (error) {
-      return `call (${args.join(", ")}) threw ${error instanceof Error ? error.message : String(error)}`;
-    }
-    if (!Object.is(got, want)) return `call (${args.join(", ")}) expected ${String(want)} got ${describe(got)}`;
+    const got = describeIn(guest.ctx, `__value(${args})`);
+    if (!same(got, want)) return `call (${args}) expected ${String(want)} got ${got.text}`;
   }
   return null;
-}
-
-function describe(value: unknown): string {
-  return typeof value === "function" ? "a function" : String(value);
 }
 
 export function lexicalTokens(text: string): number {
@@ -201,14 +241,8 @@ export function plainVerdict(source: string): { ok: true } | { ok: false; error:
   }
   const typed = typeError(code);
   if (typed !== undefined) return { ok: false, error: `TypeError ${typed}` };
-  try {
-    vm.runInNewContext(syntax.outputText, Object.create(null) as vm.Context, { timeout: 500 });
-  } catch (error) {
-    const name = error instanceof Error ? error.name : "Error";
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, error: `${name} ${message}` };
-  }
-  return { ok: true };
+  const guest = runGuest(syntax.outputText);
+  return guest.ok ? { ok: true } : { ok: false, error: guest.error };
 }
 
 export function stripFence(text: string): string {

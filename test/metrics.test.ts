@@ -24,9 +24,10 @@ test("accepts executable typescript and rejects syntax and type errors", () => {
 test("judges the value of the last expression", () => {
   assert.equal(judge("const x = 1 + 2;\nx;\n", { value: 3 }), null);
   assert.match(judge("const x = 1;\nx;\n", { value: 3 }) ?? "", /expected 3 got 1/);
-  assert.equal(judge("((a, b) => a < b);\n", { calls: [[[1, 2], true], [[2, 1], false]] }), null);
-  assert.match(judge("((a, b) => a > b);\n", { calls: [[[1, 2], true]] }) ?? "", /expected true got false/);
-  assert.match(judge("function f(n: number) { return n; }\n", { calls: [[[1], 1]] }) ?? "", /expected a function/);
+  assert.equal(judge("((a, b) => a < b);\n", { calls: [["1, 2", true], ["2, 1", false]] }), null);
+  assert.match(judge("((a, b) => a > b);\n", { calls: [["1, 2", true]] }) ?? "", /expected true got false/);
+  assert.match(judge("function f(n: number) { return n; }\n", { calls: [["1", 1]] }) ?? "", /expected a function/);
+  assert.match(judge("1;\n", { value: true }) ?? "", /expected true got 1/);
 });
 
 test("builds an edit chain whose edits change the result", () => {
@@ -51,4 +52,12 @@ test("lays out each let body on its own line", () => {
     compact(parsed.tree, { ids: true, layout: "lines" }),
     "n1:(let v0 n2:5\nn3:(let v1 n4:(add n5:v0 n6:70001)\nn7:(let v2 n8:(sub n9:v1 n10:70002)\nn11:v2)))",
   );
+});
+
+test("keeps model code away from host objects", () => {
+  assert.match(judge("console.log.constructor('return process')();\n1;\n", { value: 1 }) ?? "", /EvalError|Error/);
+  assert.match(judge("this.constructor.constructor('return process')().exit(1);\n", { value: 1 }) ?? "", /Error/);
+  assert.match(judge("while (true) {}\n", { value: 1 }) ?? "", /timed out|Error/);
+  assert.match(judge("((n: number) => { while (true) {} });\n", { calls: [["1", 1]] }) ?? "", /got/);
+  assert.equal(judge("((f: (n: number) => number) => f(5));\n", { calls: [["(n) => n * 2", 10]] }), null);
 });
