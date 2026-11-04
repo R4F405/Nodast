@@ -61,3 +61,9 @@ test("keeps model code away from host objects", () => {
   assert.match(judge("((n: number) => { while (true) {} });\n", { calls: [["1", 1]] }) ?? "", /got/);
   assert.equal(judge("((f: (n: number) => number) => f(5));\n", { calls: [["(n) => n * 2", 10]] }), null);
 });
+
+test("reports host and guest errors without mixing realms", () => {
+  assert.match(judge("while (true) {}\n", { value: 1 }) ?? "", /^Error Script execution timed out/);
+  assert.match(judge("throw new RangeError('far');\n", { value: 1 }) ?? "", /^RangeError far$/);
+  assert.match(judge("throw 5;\n", { value: 1 }) ?? "", /^undefined undefined$/);
+});

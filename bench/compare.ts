@@ -1,9 +1,10 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { compact, type Layout } from "../src/compact.ts";
 import { stripThink } from "../src/minimax.ts";
 import { parse } from "../src/parse.ts";
 import { print } from "../src/print.ts";
-import { run } from "../src/contract.ts";
+import { LANGUAGE, run } from "../src/contract.ts";
+import { edit, find, open, printed, show, type FindQuery, type Session } from "../src/tools.ts";
 import {
 
   editTasks,
@@ -35,6 +36,8 @@ type Loop = {
   replyBytes: number;
   replyTokens: number;
   promptTokens: number | null;
+  inTokens: number;
+  calls: number;
   ms: number;
 };
 
@@ -62,8 +65,18 @@ const BASE = (process.env.MINIMAX_BASE_URL || "https://api.minimax.io/v1").repla
 const RUNS = Number(process.env.BENCH_RUNS || 3);
 const CONCURRENCY = Number(process.env.BENCH_CONCURRENCY || 2);
 const TEMPERATURE = Number(process.env.BENCH_TEMPERATURE || 0.01);
+const LOG = process.env.BENCH_LOG;
 
-async function askOnce(prompt: string): Promise<Reply> {
+function log(entry: Record<string, unknown>): void {
+  if (LOG !== undefined && LOG !== "") appendFileSync(LOG, `${JSON.stringify(entry)}
+`);
+}
+
+type ToolCall = { id: string; function: { name: string; arguments: string } };
+
+type ChatReply = Reply & { message: Record<string, unknown>; toolCalls: ToolCall[] };
+
+async function askOnce(messages: unknown[], tools?: unknown[]): Promise<ChatReply> {
   const apiKey = process.env.MINIMAX_API_KEY;
   if (apiKey === undefined || apiKey === "") throw new Error("MINIMAX_API_KEY is missing");
   const start = process.hrtime.bigint();
@@ -72,7 +85,8 @@ async function askOnce(prompt: string): Promise<Reply> {
     headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
     body: JSON.stringify({
       model: MODEL,
-      messages: [{ role: "user", content: prompt }],
+      messages,
+      ...(tools === undefined ? {} : { tools }),
       max_completion_tokens: 16384,
       reasoning_effort: "low",
       temperature: TEMPERATURE,
@@ -80,13 +94,15 @@ async function askOnce(prompt: string): Promise<Reply> {
   });
   if (!response.ok) throw new InfraError(`MiniMax ${response.status} ${(await response.text()).slice(0, 200)}`);
   const body = (await response.json()) as {
-    choices?: { message?: { content?: string | null } }[];
+    choices?: { message?: Record<string, unknown> & { content?: string | null; tool_calls?: ToolCall[] } }[];
     usage?: { completion_tokens?: number; prompt_tokens?: number };
   };
   const ms = Number(process.hrtime.bigint() - start) / 1e6;
-  const raw = body.choices?.[0]?.message?.content;
+  const message = body.choices?.[0]?.message ?? {};
+  const raw = message.content;
   const content = typeof raw === "string" ? stripThink(raw) : "";
-  if (content.trim() === "") throw new InfraError("MiniMax returned an empty reply");
+  const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+  if (content.trim() === "" && toolCalls.length === 0) throw new InfraError("MiniMax returned an empty reply");
   const completion = body.usage?.completion_tokens;
   const promptTokens = body.usage?.prompt_tokens;
   return {
@@ -94,14 +110,20 @@ async function askOnce(prompt: string): Promise<Reply> {
     completionTokens: typeof completion === "number" ? completion : null,
     promptTokens: typeof promptTokens === "number" ? promptTokens : null,
     ms,
+    message,
+    toolCalls,
   };
 }
 
 async function ask(prompt: string): Promise<Reply> {
+  return chat([{ role: "user", content: prompt }]);
+}
+
+async function chat(messages: unknown[], tools?: unknown[]): Promise<ChatReply> {
   let last: unknown;
   for (let attempt = 1; attempt <= API_TRIES; attempt += 1) {
     try {
-      return await askOnce(prompt);
+      return await askOnce(messages, tools);
     } catch (error) {
       last = error;
       const limited = error instanceof Error && error.message.startsWith("MiniMax 429");
@@ -125,12 +147,16 @@ function blank(): Loop {
     replyBytes: 0,
     replyTokens: 0,
     promptTokens: null,
+    inTokens: 0,
+    calls: 0,
     ms: 0,
   };
 }
 
 function track(loop: Loop, reply: Reply): void {
   if (loop.promptTokens === null) loop.promptTokens = reply.promptTokens;
+  loop.inTokens += reply.promptTokens ?? 0;
+  loop.calls += 1;
   loop.outTokens += reply.completionTokens ?? 0;
   loop.replyBytes += Buffer.byteLength(stripFence(reply.content));
   loop.replyTokens += lexicalTokens(stripFence(reply.content));
@@ -139,12 +165,14 @@ function track(loop: Loop, reply: Reply): void {
 
 async function nodastLoop(goal: string, oracle: Oracle, program?: string, layout?: Layout): Promise<Loop> {
   const loop = blank();
+  let lastReply = "";
   const result = await run(
     program === undefined ? { goal } : { goal, program },
     {
       async complete(prompt: string) {
         const reply = await ask(prompt);
         track(loop, reply);
+        lastReply = reply.content;
         return reply.content;
       },
     },
@@ -159,6 +187,127 @@ async function nodastLoop(goal: string, oracle: Oracle, program?: string, layout
   loop.valid = true;
   loop.pass1 = result.attempts === 1;
   const wrong = judge(result.source, oracle);
+  loop.correct = wrong === null;
+  loop.error = wrong === null ? null : "wrong-result";
+  if (wrong !== null) log({ side: `nodast-${layout ?? "write"}`, goal, wrong, last: lastReply });
+  return loop;
+}
+
+const MAX_TURNS = 10;
+
+const TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "find",
+      description:
+        "Find nodes. text matches a node's exact compact text, like 70050 or (add v4 70005). kind is a node kind such as let, add, num, if. name matches a bound or used name. Returns id, parent and a short view of each match.",
+      parameters: {
+        type: "object",
+        properties: { text: { type: "string" }, kind: { type: "string" }, name: { type: "string" } },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "show",
+      description: "Show the node with this id and its children, folding deeper lists into id:...",
+      parameters: {
+        type: "object",
+        properties: { id: { type: "string" }, depth: { type: "integer" } },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit",
+      description:
+        "Apply an (edits ...) list, like (edits (replace n12 7)). The checker runs first; the reply says ok or why it was rejected, and a rejected list changes nothing.",
+      parameters: { type: "object", properties: { edits: { type: "string" } }, required: ["edits"] },
+    },
+  },
+];
+
+function callTool(session: Session, call: ToolCall): { text: string; edit: "ok" | "rejected" | null } {
+  let args: Record<string, unknown>;
+  try {
+    args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+  } catch {
+    return { text: "arguments are not valid JSON", edit: null };
+  }
+  const str = (key: string): string | undefined => (typeof args[key] === "string" ? (args[key] as string) : undefined);
+  switch (call.function.name) {
+    case "find": {
+      const query: FindQuery = {};
+      const text = str("text");
+      const kind = str("kind");
+      const name = str("name");
+      if (text !== undefined) query.text = text;
+      if (kind !== undefined) query.kind = kind;
+      if (name !== undefined) query.name = name;
+      return { text: find(session, query), edit: null };
+    }
+    case "show": {
+      const depth = typeof args.depth === "number" ? Math.min(Math.max(0, Math.floor(args.depth)), 6) : undefined;
+      return { text: show(session, str("id") ?? "", depth), edit: null };
+    }
+    case "edit": {
+      const reply = edit(session, str("edits") ?? "");
+      return { text: reply, edit: reply.startsWith("ok") ? "ok" : "rejected" };
+    }
+    default:
+      return { text: `unknown tool ${call.function.name}`, edit: null };
+  }
+}
+
+async function toolLoop(goal: string, oracle: Oracle, source: string): Promise<Loop> {
+  const loop = blank();
+  const opened = open(source);
+  if (!opened.ok) throw new Error(opened.error);
+  const session = opened.session;
+  const prompt = [
+    ...LANGUAGE,
+    "",
+    `A program is loaded: ${opened.summary}. You cannot see it; use find and show to locate nodes, then edit to change them.`,
+    "Only the edit tool changes the program; an edit written as text does nothing. When edit has answered ok and the goal is done, reply with the word done and no tool call.",
+    "",
+    `goal: ${goal}`,
+  ].join("\n");
+  const messages: unknown[] = [{ role: "user", content: prompt }];
+  let edits = 0;
+  for (let turn = 1; turn <= MAX_TURNS; turn += 1) {
+    let reply: ChatReply;
+    try {
+      reply = await chat(messages, TOOLS);
+    } catch {
+      loop.infra = true;
+      loop.error = "model-error";
+      return loop;
+    }
+    track(loop, reply);
+    loop.replyBytes += reply.toolCalls.reduce((sum, call) => sum + Buffer.byteLength(call.function.arguments), 0);
+    messages.push(reply.message);
+    if (reply.toolCalls.length === 0) break;
+    for (const call of reply.toolCalls) {
+      const result = callTool(session, call);
+      if (result.edit !== null) {
+        edits += 1;
+        if (edits === 1) loop.pass1 = result.edit === "ok";
+        if (result.edit === "ok") loop.valid = true;
+      }
+      messages.push({ role: "tool", tool_call_id: call.id, content: result.text });
+    }
+  }
+  loop.attempts = edits;
+  log({ side: "tools", goal, messages: messages.slice(1) });
+  if (!loop.valid) {
+    loop.error = edits === 0 ? "no-edit" : "rejected";
+    return loop;
+  }
+  const wrong = judge(printed(session), oracle);
   loop.correct = wrong === null;
   loop.error = wrong === null ? null : "wrong-result";
   return loop;
@@ -247,7 +396,7 @@ async function writeBench(): Promise<Group[]> {
   return groups;
 }
 
-const EDIT_SIDES = ["Nodast, ids por líneas", "Nodast, ids en una línea", "Texto plano"] as const;
+const EDIT_SIDES = ["Nodast, tools", "Nodast, ids por líneas", "Nodast, ids en una línea", "Texto plano"] as const;
 
 async function editBench(length: number): Promise<Group[]> {
   const source = chain(length);
@@ -259,9 +408,10 @@ async function editBench(length: number): Promise<Group[]> {
   tasks.forEach((task, index) => {
     const oracle: Oracle = { value: expectedAfter(task, source) };
     for (let r = 0; r < RUNS; r += 1) {
-      jobs.push(async () => ({ index, side: EDIT_SIDES[0], loop: await nodastLoop(task.goal, oracle, source, "lines") }));
-      jobs.push(async () => ({ index, side: EDIT_SIDES[1], loop: await nodastLoop(task.goal, oracle, source, "inline") }));
-      jobs.push(async () => ({ index, side: EDIT_SIDES[2], loop: await plainLoop(plainEditPrompt(task.goal, file), oracle) }));
+      jobs.push(async () => ({ index, side: EDIT_SIDES[0], loop: await toolLoop(task.goal, oracle, source) }));
+      jobs.push(async () => ({ index, side: EDIT_SIDES[1], loop: await nodastLoop(task.goal, oracle, source, "lines") }));
+      jobs.push(async () => ({ index, side: EDIT_SIDES[2], loop: await nodastLoop(task.goal, oracle, source, "inline") }));
+      jobs.push(async () => ({ index, side: EDIT_SIDES[3], loop: await plainLoop(plainEditPrompt(task.goal, file), oracle) }));
     }
   });
   const groups: Group[] = tasks.map(() => new Map());
@@ -316,7 +466,13 @@ function summary(cols: Column[], withPrompt: boolean): string {
     row(`Correcto en ≤ ${ATTEMPTS} intentos (oráculo)`, (l) => rate(l, (x) => x.correct)),
     row("Intentos medios", (l) => avg(l, (x) => x.attempts, 2)),
     row("`completion_tokens` medios, todos los intentos", (l) => avg(l, (x) => x.outTokens)),
-    ...(withPrompt ? [row("`prompt_tokens` del primer intento", (l) => avg(l, (x) => x.promptTokens))] : []),
+    ...(withPrompt
+      ? [
+          row("`prompt_tokens` del primer intento", (l) => avg(l, (x) => x.promptTokens)),
+          row("`prompt_tokens` totales, todas las llamadas", (l) => avg(l, (x) => x.inTokens)),
+          row("Llamadas al modelo", (l) => avg(l, (x) => x.calls, 1)),
+        ]
+      : []),
     row("Respuesta visible, tokens léxicos medios", (l) => avg(l, (x) => x.replyTokens)),
     row("Respuesta visible, bytes medios", (l) => avg(l, (x) => x.replyBytes)),
     row("Latencia media, todos los intentos", (l) => `${avg(l, (x) => x.ms)} ms`),
@@ -337,7 +493,7 @@ function perItem(labels: readonly string[], groups: Group[], sides: readonly str
 const SIZES = (process.env.BENCH_SIZES || "50,500").split(",").map((item) => Number(item.trim()));
 
 process.stderr.write(`write bench: ${GOALS.length} goals × ${RUNS} runs\n`);
-const written = await writeBench();
+const written = process.env.BENCH_WRITE === "0" ? GOALS.map((): Group => new Map()) : await writeBench();
 const editSections: string[] = [];
 for (const length of SIZES) {
   process.stderr.write(`edit bench: chain ${length}, ${editTasks(length).length} tasks × ${RUNS} runs\n`);
@@ -389,7 +545,7 @@ ${perItem(GOALS.map((goal) => goal.goal), written, WRITE_SIDES)}
 
 ## Editar un archivo existente
 
-Una cadena de \`let\` donde cada paso suma o resta una constante. Nodast recibe el árbol con un id delante de cada nodo y devuelve \`(edits ...)\`; se prueba con cada \`let\` en su línea y con todo en una. El texto plano recibe el TypeScript y devuelve el archivo entero. El oráculo es el valor final del programa ya editado.
+Una cadena de \`let\` donde cada paso suma o resta una constante. Nodast recibe el árbol con un id delante de cada nodo y devuelve \`(edits ...)\`; se prueba con cada \`let\` en su línea y con todo en una. La variante con tools no ve el árbol: recibe un resumen y usa \`find\`, \`show\` y \`edit\` por function calling, hasta ${MAX_TURNS} llamadas; sus intentos son llamadas a \`edit\`. El texto plano recibe el TypeScript y devuelve el archivo entero. El oráculo es el valor final del programa ya editado.
 
 ${editSections.join("\n\n")}
 

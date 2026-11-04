@@ -3,11 +3,21 @@ import type { Expr } from "./ir.ts";
 export type Layout = "inline" | "lines";
 
 // "lines" starts the body of every let on its own line, so a long chain reads one binding per line.
-export function compact(expr: Expr, options?: { ids?: boolean; layout?: Layout }): string {
+// depth folds every list deeper than that level into its id followed by "...".
+export function compact(expr: Expr, options?: { ids?: boolean; layout?: Layout; depth?: number }): string {
   const ids = options?.ids ?? false;
   const gap = options?.layout === "lines" ? "\n" : " ";
+  const limit = options?.depth;
   const tag = (node: Expr, text: string): string => (ids ? `${node.id}:${text}` : text);
+  let level = 0;
   const walk = (node: Expr): string => {
+    if (limit !== undefined && level > limit && childrenOf(node).length > 0) return `${node.id}:...`;
+    level += 1;
+    const text = render(node);
+    level -= 1;
+    return text;
+  };
+  const render = (node: Expr): string => {
     switch (node.kind) {
       case "num":
         return tag(node, String(node.value));

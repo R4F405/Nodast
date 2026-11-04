@@ -14,18 +14,18 @@ El bloque `<think>` que MiniMax mete en `content` se quita antes de juzgar. Un f
 | --- | ---: | ---: |
 | Pass@1, válido al primer intento | 32/36 (89%) | 36/36 (100%) |
 | Válido en ≤ 3 intentos | 36/36 (100%) | 36/36 (100%) |
-| Correcto en ≤ 3 intentos (oráculo) | 35/36 (97%) | 34/36 (94%) |
-| Intentos medios | 1.11 | 1.00 |
-| `completion_tokens` medios, todos los intentos | 546 | 236 |
-| Respuesta visible, tokens léxicos medios | 22 | 21 |
-| Respuesta visible, bytes medios | 41 | 47 |
-| Latencia media, todos los intentos | 4992 ms | 2404 ms |
+| Correcto en ≤ 3 intentos (oráculo) | 36/36 (100%) | 34/36 (94%) |
+| Intentos medios | 1.17 | 1.00 |
+| `completion_tokens` medios, todos los intentos | 800 | 279 |
+| Respuesta visible, tokens léxicos medios | 23 | 22 |
+| Respuesta visible, bytes medios | 43 | 49 |
+| Latencia media, todos los intentos | 8914 ms | 2899 ms |
 | Fallos de API excluidos | 0 | 0 |
-| Fallos | wrong-result ×1 | wrong-result ×2 |
+| Fallos | — | wrong-result ×2 |
 
 | Objetivo | Correcto, Nodast | Correcto, Texto plano |
 | --- | ---: | ---: |
-| bind the sum of 1 and 2 | 3/3 (100%) | 1/3 (33%) |
+| bind the sum of 1 and 2 | 3/3 (100%) | 2/3 (67%) |
 | define a function that adds 1 to its number argument | 3/3 (100%) | 3/3 (100%) |
 | bind x to 1, then return 0 when x is less than 0, otherwise x | 3/3 (100%) | 3/3 (100%) |
 | multiply 3 by 4 | 3/3 (100%) | 3/3 (100%) |
@@ -34,61 +34,65 @@ El bloque `<think>` que MiniMax mete en `content` se quita antes de juzgar. Un f
 | compute the absolute value of -7 with a conditional | 3/3 (100%) | 3/3 (100%) |
 | define a function that returns 1 when its number argument is zero and 0 otherwise | 3/3 (100%) | 3/3 (100%) |
 | define a function that clamps its number argument between 0 and 10 | 3/3 (100%) | 3/3 (100%) |
-| define a function of three numbers that returns the middle one by value | 2/3 (67%) | 3/3 (100%) |
+| define a function of three numbers that returns the middle one by value | 3/3 (100%) | 2/3 (67%) |
 | bind double to a function that doubles a number and inc to one that adds 1, then return inc applied to double applied to 5 | 3/3 (100%) | 3/3 (100%) |
 | define a function that takes a function f and returns f applied to 5 | 3/3 (100%) | 3/3 (100%) |
 
 ## Editar un archivo existente
 
-Una cadena de `let` donde cada paso suma o resta una constante. Nodast recibe el árbol con un id delante de cada nodo y devuelve `(edits ...)`; se prueba con cada `let` en su línea y con todo en una. El texto plano recibe el TypeScript y devuelve el archivo entero. El oráculo es el valor final del programa ya editado.
+Una cadena de `let` donde cada paso suma o resta una constante. Nodast recibe el árbol con un id delante de cada nodo y devuelve `(edits ...)`; se prueba con cada `let` en su línea y con todo en una. La variante con tools no ve el árbol: recibe un resumen y usa `find`, `show` y `edit` por function calling, hasta 10 llamadas; sus intentos son llamadas a `edit`. El texto plano recibe el TypeScript y devuelve el archivo entero. El oráculo es el valor final del programa ya editado.
 
 ### Cadena de 50 `let`
 
 203 nodos. TypeScript: 1250 bytes. Árbol con ids: 2202 bytes por líneas, 2202 en una línea.
 
-|  | Nodast, ids por líneas | Nodast, ids en una línea | Texto plano |
-| --- | ---: | ---: | ---: |
-| Pass@1, válido al primer intento | 9/9 (100%) | 7/9 (78%) | 9/9 (100%) |
-| Válido en ≤ 3 intentos | 9/9 (100%) | 9/9 (100%) | 9/9 (100%) |
-| Correcto en ≤ 3 intentos (oráculo) | 9/9 (100%) | 6/9 (67%) | 8/9 (89%) |
-| Intentos medios | 1.00 | 1.22 | 1.00 |
-| `completion_tokens` medios, todos los intentos | 973 | 792 | 636 |
-| `prompt_tokens` del primer intento | 1573 | 1565 | 801 |
-| Respuesta visible, tokens léxicos medios | 9 | 13 | 357 |
-| Respuesta visible, bytes medios | 28 | 39 | 1246 |
-| Latencia media, todos los intentos | 7446 ms | 7896 ms | 2739 ms |
-| Fallos de API excluidos | 0 | 0 | 0 |
-| Fallos | — | wrong-result ×3 | wrong-result ×1 |
+|  | Nodast, tools | Nodast, ids por líneas | Nodast, ids en una línea | Texto plano |
+| --- | ---: | ---: | ---: | ---: |
+| Pass@1, válido al primer intento | 7/9 (78%) | 9/9 (100%) | 8/9 (89%) | 9/9 (100%) |
+| Válido en ≤ 3 intentos | 9/9 (100%) | 9/9 (100%) | 9/9 (100%) | 9/9 (100%) |
+| Correcto en ≤ 3 intentos (oráculo) | 9/9 (100%) | 9/9 (100%) | 8/9 (89%) | 7/9 (78%) |
+| Intentos medios | 1.22 | 1.00 | 1.11 | 1.00 |
+| `completion_tokens` medios, todos los intentos | 198 | 801 | 657 | 645 |
+| `prompt_tokens` del primer intento | 1065 | 1575 | 1565 | 801 |
+| `prompt_tokens` totales, todas las llamadas | 5685 | 1575 | 1745 | 801 |
+| Llamadas al modelo | 4.1 | 1.0 | 1.1 | 1.0 |
+| Respuesta visible, tokens léxicos medios | 1 | 9 | 11 | 357 |
+| Respuesta visible, bytes medios | 82 | 28 | 34 | 1246 |
+| Latencia media, todos los intentos | 3275 ms | 7546 ms | 8759 ms | 3182 ms |
+| Fallos de API excluidos | 0 | 0 | 0 | 0 |
+| Fallos | — | — | wrong-result ×1 | wrong-result ×2 |
 
-| Objetivo | Correcto, Nodast, ids por líneas | Correcto, Nodast, ids en una línea | Correcto, Texto plano |
-| --- | ---: | ---: | ---: |
-| change the constant 70005 to 7 | 3/3 (100%) | 1/3 (33%) | 3/3 (100%) |
-| change the constant 70044 to 7 | 3/3 (100%) | 2/3 (67%) | 2/3 (67%) |
-| in the binding of v25, subtract instead of add | 3/3 (100%) | 3/3 (100%) | 3/3 (100%) |
+| Objetivo | Correcto, Nodast, tools | Correcto, Nodast, ids por líneas | Correcto, Nodast, ids en una línea | Correcto, Texto plano |
+| --- | ---: | ---: | ---: | ---: |
+| change the constant 70005 to 7 | 3/3 (100%) | 3/3 (100%) | 3/3 (100%) | 3/3 (100%) |
+| change the constant 70044 to 7 | 3/3 (100%) | 3/3 (100%) | 3/3 (100%) | 1/3 (33%) |
+| in the binding of v25, subtract instead of add | 3/3 (100%) | 3/3 (100%) | 2/3 (67%) | 3/3 (100%) |
 
 ### Cadena de 500 `let`
 
 2003 nodos. TypeScript: 13302 bytes. Árbol con ids: 24708 bytes por líneas, 24708 en una línea.
 
-|  | Nodast, ids por líneas | Nodast, ids en una línea | Texto plano |
-| --- | ---: | ---: | ---: |
-| Pass@1, válido al primer intento | 9/9 (100%) | 9/9 (100%) | 9/9 (100%) |
-| Válido en ≤ 3 intentos | 9/9 (100%) | 9/9 (100%) | 9/9 (100%) |
-| Correcto en ≤ 3 intentos (oráculo) | 7/9 (78%) | 6/9 (67%) | 8/9 (89%) |
-| Intentos medios | 1.00 | 1.00 | 1.00 |
-| `completion_tokens` medios, todos los intentos | 637 | 372 | 5726 |
-| `prompt_tokens` del primer intento | 11690 | 11694 | 5748 |
-| Respuesta visible, tokens léxicos medios | 9 | 9 | 3507 |
-| Respuesta visible, bytes medios | 30 | 30 | 13298 |
-| Latencia media, todos los intentos | 6771 ms | 2415 ms | 20652 ms |
-| Fallos de API excluidos | 0 | 0 | 0 |
-| Fallos | wrong-result ×2 | wrong-result ×3 | wrong-result ×1 |
+|  | Nodast, tools | Nodast, ids por líneas | Nodast, ids en una línea | Texto plano |
+| --- | ---: | ---: | ---: | ---: |
+| Pass@1, válido al primer intento | 8/9 (89%) | 7/9 (78%) | 9/9 (100%) | 9/9 (100%) |
+| Válido en ≤ 3 intentos | 9/9 (100%) | 9/9 (100%) | 9/9 (100%) | 9/9 (100%) |
+| Correcto en ≤ 3 intentos (oráculo) | 9/9 (100%) | 7/9 (78%) | 8/9 (89%) | 9/9 (100%) |
+| Intentos medios | 1.11 | 1.22 | 1.00 | 1.00 |
+| `completion_tokens` medios, todos los intentos | 316 | 468 | 1136 | 5770 |
+| `prompt_tokens` del primer intento | 1066 | 11692 | 11694 | 5749 |
+| `prompt_tokens` totales, todas las llamadas | 6217 | 14299 | 11694 | 5749 |
+| Llamadas al modelo | 4.6 | 1.2 | 1.0 | 1.0 |
+| Respuesta visible, tokens léxicos medios | 1 | 13 | 9 | 3507 |
+| Respuesta visible, bytes medios | 84 | 41 | 30 | 13298 |
+| Latencia media, todos los intentos | 3646 ms | 4705 ms | 6585 ms | 20015 ms |
+| Fallos de API excluidos | 0 | 0 | 0 | 0 |
+| Fallos | — | wrong-result ×2 | wrong-result ×1 | — |
 
-| Objetivo | Correcto, Nodast, ids por líneas | Correcto, Nodast, ids en una línea | Correcto, Texto plano |
-| --- | ---: | ---: | ---: |
-| change the constant 70050 to 7 | 1/3 (33%) | 1/3 (33%) | 3/3 (100%) |
-| change the constant 70440 to 7 | 3/3 (100%) | 3/3 (100%) | 2/3 (67%) |
-| in the binding of v251, subtract instead of add | 3/3 (100%) | 2/3 (67%) | 3/3 (100%) |
+| Objetivo | Correcto, Nodast, tools | Correcto, Nodast, ids por líneas | Correcto, Nodast, ids en una línea | Correcto, Texto plano |
+| --- | ---: | ---: | ---: | ---: |
+| change the constant 70050 to 7 | 3/3 (100%) | 1/3 (33%) | 2/3 (67%) | 3/3 (100%) |
+| change the constant 70440 to 7 | 3/3 (100%) | 3/3 (100%) | 3/3 (100%) | 3/3 (100%) |
+| in the binding of v251, subtract instead of add | 3/3 (100%) | 3/3 (100%) | 3/3 (100%) | 3/3 (100%) |
 
 ## Payload
 

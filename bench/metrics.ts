@@ -111,6 +111,10 @@ function runGuest(js: string): Guest {
     (ctx as Record<string, unknown>).__value = vm.runInContext(js, ctx, { timeout: TIMEOUT_MS });
     return { ok: true, ctx };
   } catch (error) {
+    // A timeout or a compile error is a host object: read it here and never hand it to the guest,
+    // since its constructor chain reaches the host Function. Anything else was thrown by guest code
+    // and belongs to the guest realm, so it is only ever read from inside the guest.
+    if (error instanceof Error) return { ok: false, error: `${String(error.name)} ${String(error.message)}` };
     (ctx as Record<string, unknown>).__error = error;
     const text = probe(ctx, "String(__error && __error.name) + ' ' + String(__error && __error.message)");
     return { ok: false, error: text ?? "Error unknown" };

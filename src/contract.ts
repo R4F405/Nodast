@@ -120,6 +120,16 @@ function accept(tree: Expr | undefined, reply: string): Outcome {
     if (!checked.ok) return { ok: false, error: checked.error, tree: parsed.tree };
     return { ok: true, source: print(parsed.tree) };
   }
+  const applied = applyEditText(tree, text);
+  if (!applied.ok) return applied;
+  return { ok: true, source: print(applied.tree) };
+}
+
+// Parses an (edits ...) list, applies it to a copy of tree and runs the checker on the result.
+export function applyEditText(
+  tree: Expr,
+  text: string,
+): { ok: true; tree: Expr; type: string } | { ok: false; error: ContractError; tree?: Expr } {
   if (leadingName(text) !== "edits") return { ok: false, error: { code: "expected-edits" } };
   const edits = parseEdits(text);
   if (!edits.ok) return edits;
@@ -127,7 +137,7 @@ function accept(tree: Expr | undefined, reply: string): Outcome {
   if (!applied.ok) return applied;
   const checked = check(applied.tree);
   if (!checked.ok) return { ok: false, error: checked.error, tree: applied.tree };
-  return { ok: true, source: print(applied.tree) };
+  return { ok: true, tree: applied.tree, type: checked.type };
 }
 
 function applyAll(tree: Expr, edits: readonly RawEdit[]): { ok: true; tree: Expr } | { ok: false; error: EditError } {
@@ -150,7 +160,7 @@ function prepare(tree: Expr, edit: RawEdit): Edit {
   return { op: "insert", id: edit.id, index: edit.index, node };
 }
 
-const LANGUAGE = [
+export const LANGUAGE = [
   "Reply with only one program, or one (edits ...) list. No prose, no code fences.",
   "",
   "language:",
@@ -197,7 +207,7 @@ function renderPrompt(goal: string, program: Expr | undefined, rejections: reado
   return `${lines.join("\n")}\n`;
 }
 
-function errorLine(error: ContractError, tree?: Expr): string {
+export function errorLine(error: ContractError, tree?: Expr): string {
   const base = baseLine(error);
   if (tree === undefined || !("nodeId" in error)) return base;
   const node = findNode(tree, error.nodeId);
@@ -209,9 +219,9 @@ function baseLine(error: ContractError): string {
     case "empty-response":
       return "empty-response";
     case "expected-program":
-      return "expected-program";
+      return "expected-program, write one program like (let x (add 1 2) x)";
     case "expected-edits":
-      return "expected-edits";
+      return "expected-edits, write one list like (edits (replace n4 7))";
     case "parse":
       return `parse ${error.line}:${error.column} ${error.message}`;
     case "response":
