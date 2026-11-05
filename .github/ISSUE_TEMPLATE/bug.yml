@@ -1,0 +1,38 @@
+name: Bug
+description: Algo no hace lo que dice el README o el roadmap
+labels: [bug]
+body:
+  - type: textarea
+    id: input
+    attributes:
+      label: Entrada
+      description: El texto compacto, el (edits ...) o la llamada que lo provoca.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Qué esperabas
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Qué pasa
+      description: La salida o el error tal cual.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: side
+    attributes:
+      label: Dónde
+      options:
+        - TypeScript (src/)
+        - Rust (rust/)
+        - Los dos
+        - Bench
+        - No lo sé
+    validations:
+      required: true

@@ -1,0 +1,29 @@
+name: Propuesta
+description: Un nodo, una operación, un cambio del formato o una medición nueva
+labels: [proposal]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qué problema resuelve
+      description: Qué falla o cuesta hoy, con un ejemplo.
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: Qué cambiaría
+      description: Nodos, texto compacto, operaciones, checker, printer o bench.
+    validations:
+      required: true
+  - type: textarea
+    id: measure
+    attributes:
+      label: Cómo se mediría
+      description: Qué test o qué pasada del bench demostraría que mejora.
+    validations:
+      required: true
+  - type: textarea
+    id: out
+    attributes:
+      label: Qué queda fuera

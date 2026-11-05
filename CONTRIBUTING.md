@@ -1,6 +1,6 @@
 # Contribuir
 
-Nodast está en fase de diseño ejecutable: las decisiones de formato ya están tomadas y el código del PoC todavía no existe. Un cambio entra si acerca el [roadmap](ROADMAP.md) y respeta las decisiones cerradas del [README](README.md).
+El PoC está cerrado: parser, checker, printer a TypeScript, operaciones, contrato con el modelo, binario, motor en Rust, tools y bench. Un cambio entra si acerca el [roadmap](ROADMAP.md) y respeta las decisiones cerradas del [README](README.md). Lo que más ayuda ahora está en "Después del PoC" del roadmap y en las issues.
 
 ## Antes de escribir código
 
@@ -15,15 +15,18 @@ Un arreglo de documentación, un test del comportamiento ya descrito o un bug cl
 
 ## Qué se acepta ahora
 
-Trabajo de las fases 1 a 4 del roadmap, en orden. Una fase no se salta: el printer no se fusiona sin parser, el contrato del modelo no se fusiona sin checker.
+- Arreglos y tests del comportamiento ya descrito.
+- Operaciones de estructura en `src/tools.ts`, como `rename` y `param`, con su caso en el bench.
+- Crecer el lenguaje hacia programas reales, tras una issue que lo acuerde.
+- Mediciones nuevas en `bench/`, con otro modelo o con otra tarea.
 
-En un pull request cabe una fase, o un corte vertical pequeño de una fase que se pueda probar solo. No cabe “el PoC entero” en un único diff.
+En un pull request cabe una idea que se pueda probar sola. TypeScript sigue siendo la referencia de comportamiento: un cambio en el parser, el checker, el printer, las operaciones o el binario llega a la vez en `src/` y en `rust/`.
 
 ## Qué no se acepta
 
 - Reabrir JSON, hexadecimal o el AST de otro compilador como formato hacia el modelo.
 - Hacer que el modelo emita el fuente final.
-- Añadir Rust, Python u otro printer antes de cerrar el de TypeScript.
+- Añadir otro printer mientras el de TypeScript no lleve un tiempo estable.
 - Dependencias que solo sirven para una fase futura.
 - Tests que llamen a una API de pago o exijan una clave.
 
@@ -40,6 +43,8 @@ Usa un título concreto. En el cuerpo:
 El idioma puede ser español o inglés. Uno solo por issue.
 
 ## Pull requests
+
+`main` está protegida: todo entra por pull request y la CI tiene que pasar (TypeScript y Rust). Haz un fork o una rama, abre el pull request contra `main` y rellena la plantilla. Se fusiona con squash, así que el título del pull request queda como commit y sigue Conventional Commits.
 
 - Una idea por pull request.
 - El cuerpo enlaza la issue cuando exista.
@@ -71,13 +76,17 @@ El asunto puede ir en inglés. Si el cuerpo hace falta, español o inglés, el m
 
 - Node 22.18 o superior
 - pnpm 11.5, la versión del campo `packageManager` en `package.json`
+- Rust estable, para `rust/`
 - Un editor que respete `.editorconfig`
 
 ```sh
 pnpm install
 pnpm test
 pnpm typecheck
+cargo test --manifest-path rust/Cargo.toml
 ```
+
+`pnpm bench` llama a un modelo de verdad y necesita una clave en `.env`; mira `.env.example`. Ni los tests ni la CI la usan.
 
 ## Licencia
 
