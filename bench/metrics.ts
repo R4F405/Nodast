@@ -4,6 +4,8 @@ import { applyEdits, encode, parse, print, type Expr } from "../src/index.ts";
 
 export type Oracle =
   | { value: number | boolean }
+  // A rename keeps the value, so the file itself must match too, ignoring whitespace.
+  | { value: number | boolean; source: string }
   // Each call gives the arguments as JavaScript source, so they are built inside the sandbox.
   | { calls: Array<[string, number | boolean]> };
 
@@ -56,6 +58,30 @@ export function chain(length: number): string {
     body = `(let v${i} (${opAt(i)} v${i - 1} ${BASE + i}) ${body})`;
   }
   return `(let v0 5 ${body})`;
+}
+
+// A program where two names share a prefix: rate is used on three steps of four, rate_cap on the fourth.
+// Renaming rate must touch every use of rate and none of rate_cap, which a careless text replace gets wrong.
+export function rates(length: number): string {
+  let body = `v${length}`;
+  for (let i = length; i >= 1; i -= 1) {
+    body = `(let v${i} (add v${i - 1} (mul ${i % 4 === 0 ? "rate_cap" : "rate"} ${i})) ${body})`;
+  }
+  return `(let rate 3 (let rate_cap 7 (let v0 1 ${body})))`;
+}
+
+// The goal and the oracle for renaming rate. The expected file comes from a word-bounded replace on the
+// compact text, not from the rename under test.
+export function renameTask(source: string): Goal {
+  const parsed = parse(source.replace(/\brate\b/g, "scale"));
+  if (!parsed.ok) throw new Error(parsed.error.message);
+  const expected = print(parsed.tree);
+  const value = evaluate(expected);
+  if (!value.ok || value.kind !== "number") throw new Error("rename program must give a number");
+  return {
+    goal: "rename the variable rate to scale everywhere; rate_cap keeps its name",
+    oracle: { value: Number(value.text), source: expected },
+  };
 }
 
 export function editTasks(length: number): EditTask[] {
@@ -162,13 +188,21 @@ export function judge(source: string, oracle: Oracle): string | null {
   const guest = runGuest(js);
   if (!guest.ok) return guest.error;
   const value = describeIn(guest.ctx, "__value");
-  if ("value" in oracle) return same(value, oracle.value) ? null : `expected ${String(oracle.value)} got ${value.text}`;
+  if ("value" in oracle) {
+    if (!same(value, oracle.value)) return `expected ${String(oracle.value)} got ${value.text}`;
+    if ("source" in oracle && squeeze(stripFence(source)) !== squeeze(oracle.source)) return "file differs from the expected rename";
+    return null;
+  }
   if (value.kind !== "function") return `expected a function got ${value.text}`;
   for (const [args, want] of oracle.calls) {
     const got = describeIn(guest.ctx, `__value(${args})`);
     if (!same(got, want)) return `call (${args}) expected ${String(want)} got ${got.text}`;
   }
   return null;
+}
+
+function squeeze(text: string): string {
+  return text.replace(/\s+/g, "");
 }
 
 export function lexicalTokens(text: string): number {

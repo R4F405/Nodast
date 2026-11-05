@@ -18,7 +18,8 @@ test("accepts a program and prints it after the checker", async () => {
   assert.equal(model.prompts.length, 1);
   assert.match(model.prompts[0] ?? "", /\(fn \(a b\) body\)/);
   assert.match(model.prompts[0] ?? "", /\(lt a b\)/);
-  assert.equal(tail(model.prompts[0]), "goal: bind the sum\nprogram: none\n");
+  assert.equal(tail(model.prompts[0]), "goal: bind the sum\n");
+  assert.doesNotMatch(model.prompts[0] ?? "", /edits/);
 });
 
 test("strips a fence and retries a rejected program", async () => {
@@ -31,7 +32,6 @@ test("strips a fence and retries a rejected program", async () => {
   assert.equal(
     tail(model.prompts[1]),
     `goal: bind the sum
-program: none
 
 rejected:
 (add true 1)

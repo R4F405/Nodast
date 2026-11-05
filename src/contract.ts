@@ -126,26 +126,32 @@ function accept(tree: Expr | undefined, reply: string): Outcome {
 }
 
 // Parses an (edits ...) list, applies it to a copy of tree and runs the checker on the result.
+// New nodes never take an id from retired, so an id a model saw earlier keeps meaning that node or nothing.
 export function applyEditText(
   tree: Expr,
   text: string,
+  retired: ReadonlySet<string> = new Set(),
 ): { ok: true; tree: Expr; type: string } | { ok: false; error: ContractError; tree?: Expr } {
   if (leadingName(text) !== "edits") return { ok: false, error: { code: "expected-edits" } };
   const edits = parseEdits(text);
   if (!edits.ok) return edits;
-  const applied = applyAll(tree, edits.edits);
+  const applied = applyAll(tree, edits.edits, retired);
   if (!applied.ok) return applied;
   const checked = check(applied.tree);
   if (!checked.ok) return { ok: false, error: checked.error, tree: applied.tree };
   return { ok: true, tree: applied.tree, type: checked.type };
 }
 
-function applyAll(tree: Expr, edits: readonly RawEdit[]): { ok: true; tree: Expr } | { ok: false; error: EditError } {
+function applyAll(
+  tree: Expr,
+  edits: readonly RawEdit[],
+  retired: ReadonlySet<string>,
+): { ok: true; tree: Expr } | { ok: false; error: EditError } {
   let draft = tree;
   for (let at = 0; at < edits.length; at += 1) {
     const raw = edits[at];
     if (raw === undefined) continue;
-    const edit = prepare(draft, raw);
+    const edit = prepare(draft, raw, retired);
     const applied = applyEdits(draft, [edit]);
     if (!applied.ok) return { ok: false, error: { ...applied.error, at } };
     draft = applied.tree;
@@ -153,16 +159,18 @@ function applyAll(tree: Expr, edits: readonly RawEdit[]): { ok: true; tree: Expr
   return { ok: true, tree: draft };
 }
 
-function prepare(tree: Expr, edit: RawEdit): Edit {
+function prepare(tree: Expr, edit: RawEdit, retired: ReadonlySet<string>): Edit {
   if (edit.op === "delete") return { op: "delete", id: edit.id };
-  const node = renumber(edit.expr, collectIds(tree));
+  const taken = collectIds(tree);
+  for (const id of retired) taken.add(id);
+  const node = renumber(edit.expr, taken);
   if (edit.op === "replace") return { op: "replace", id: edit.id, node };
   return { op: "insert", id: edit.id, index: edit.index, node };
 }
 
-export const LANGUAGE = [
-  "Reply with only one program, or one (edits ...) list. No prose, no code fences.",
-  "",
+// The grammar every prompt teaches. Writing and editing add their own rules and examples on top,
+// so a model that writes never reads about edits and one that edits never reads write examples.
+export const GRAMMAR = [
   "language:",
   "number: 0 12 -4    bool: true false    name: x total_2",
   "(let name value body)    bind name to value, visible only inside body",
@@ -172,34 +180,47 @@ export const LANGUAGE = [
   "(eq a b) (lt a b) (gt a b) (lte a b) (gte a b)    numbers to bool",
   "(f a b)                  call f with a and b",
   "Each form takes exactly the arguments shown. There are no infix operators and no other keywords.",
-  "",
-  "edits, only when a program is given:",
+];
+
+export const EDIT_RULES = [
+  "edits:",
   "(edits (replace id expr) (insert id index expr) (delete id))",
-  "Each node of the given program is prefixed with its id, like n4:3. Ids never appear inside expr.",
+  "Each node of the program is prefixed with its id, like n4:3. Copy ids exactly; never compute them. Ids never appear inside expr.",
   "replace swaps any node. insert adds an argument to the call with that id. delete removes that call argument.",
+];
+
+export const WRITE_PROMPT = [
+  "Reply with only one program. No prose, no code fences.",
+  "",
+  ...GRAMMAR,
   "",
   "examples:",
   "goal: bind the difference of 8 and 3",
-  "program: none",
   "(let x (sub 8 3) x)",
   "",
   "goal: define a function that doubles its argument",
-  "program: none",
   "(fn (n) (mul n 2))",
+];
+
+export const EDIT_PROMPT = [
+  "Reply with only one (edits ...) list. No prose, no code fences.",
   "",
+  ...GRAMMAR,
+  "",
+  ...EDIT_RULES,
+  "",
+  "example:",
   "goal: change 3 to 5",
   "program: n1:(let x n2:(sub n3:8 n4:3) n5:x)",
   "(edits (replace n4 5))",
 ];
 
 function renderPrompt(goal: string, program: Expr | undefined, rejections: readonly Rejection[], layout: Layout): string {
-  const shown = program === undefined ? "none" : compact(program, { ids: true, layout });
-  const lines = [
-    ...LANGUAGE,
-    "",
-    `goal: ${goal.replace(/\s+/g, " ").trim()}`,
-    shown.includes("\n") ? `program:\n${shown}` : `program: ${shown}`,
-  ];
+  const lines = [...(program === undefined ? WRITE_PROMPT : EDIT_PROMPT), "", `goal: ${goal.replace(/\s+/g, " ").trim()}`];
+  if (program !== undefined) {
+    const shown = compact(program, { ids: true, layout });
+    lines.push(shown.includes("\n") ? `program:\n${shown}` : `program: ${shown}`);
+  }
   for (const rejection of rejections) {
     lines.push("", "rejected:", rejection.response.trim(), "error:", rejection.error);
   }
