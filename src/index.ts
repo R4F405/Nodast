@@ -1,6 +1,7 @@
 export { fixture, run } from "./contract.ts";
 export type { ContractError, Model, RunInput, RunResult } from "./contract.ts";
 export { check } from "./check.ts";
+export { compact } from "./compact.ts";
 export type { CheckError, CheckResult } from "./check.ts";
 export { applyEdits } from "./edit.ts";
 export type { ApplyResult, Edit, EditError } from "./edit.ts";

@@ -2,15 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fixture, run, type Model } from "../src/contract.ts";
 
-const PROMPT = `Reply with only one program, or one (edits ...) list. No prose.
-
-(edits (replace id expr) (insert id index expr) (delete id))
-
-goal: bind the sum
-
-program:
-none
-`;
+function tail(prompt: string | undefined): string {
+  const text = prompt ?? "";
+  return text.slice(text.lastIndexOf("\ngoal: ") + 1);
+}
 
 test("accepts a program and prints it after the checker", async () => {
   const model = fixture(["(let x (add 1 2) x)"]);
@@ -20,7 +15,11 @@ test("accepts a program and prints it after the checker", async () => {
     attempts: 1,
     source: "const x = 1 + 2;\nx;\n",
   });
-  assert.deepEqual(model.prompts, [PROMPT]);
+  assert.equal(model.prompts.length, 1);
+  assert.match(model.prompts[0] ?? "", /\(fn \(a b\) body\)/);
+  assert.match(model.prompts[0] ?? "", /\(lt a b\)/);
+  assert.equal(tail(model.prompts[0]), "goal: bind the sum\n");
+  assert.doesNotMatch(model.prompts[0] ?? "", /edits/);
 });
 
 test("strips a fence and retries a rejected program", async () => {
@@ -31,12 +30,15 @@ test("strips a fence and retries a rejected program", async () => {
   assert.equal(result.attempts, 2);
   assert.equal(result.source, "1 + 2;\n");
   assert.equal(
-    model.prompts[1],
-    `${PROMPT}rejected:
-(add true 1)
+    tail(model.prompts[1]),
+    `goal: bind the sum
 
+rejected:
+(add true 1)
 error:
-type-mismatch n1 expected number actual bool
+type-mismatch n1 expected number actual bool in (add true 1)
+
+Reply again with a corrected answer.
 `,
   );
 });
@@ -45,7 +47,7 @@ test("applies edits to the current program", async () => {
   const model = fixture(["(edits (replace n2 9) (replace n3 8))"]);
   const result = await run({ goal: "change both numbers", program: "(add 1 2)" }, model);
   assert.deepEqual(result, { ok: true, attempts: 1, source: "9 + 8;\n" });
-  assert.match(model.prompts[0] ?? "", /program:\n\(add 1 2\)\n$/);
+  assert.match(model.prompts[0] ?? "", /program: n1:\(add n2:1 n3:2\)\n$/);
 });
 
 test("retries a rejected edit", async () => {
@@ -54,7 +56,7 @@ test("retries a rejected edit", async () => {
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.source, "9 + 2;\n");
-  assert.match(model.prompts[1] ?? "", /error:\ntype-mismatch n1 expected number actual bool\n$/);
+  assert.match(model.prompts[1] ?? "", /error:\ntype-mismatch n1 expected number actual bool in \(add true 2\)\n/);
 });
 
 test("inserts and deletes through the edit list", async () => {

@@ -1,4 +1,5 @@
 import { check, type CheckError } from "./check.ts";
+import { compact, findNode, snippet, type Layout } from "./compact.ts";
 import { applyEdits, type Edit, type EditError } from "./edit.ts";
 import type { Expr, SourcePosition } from "./ir.ts";
 import { parse } from "./parse.ts";
@@ -39,9 +40,10 @@ const DEFAULT_ATTEMPTS = 3;
 export async function run(
   input: RunInput,
   model: Model,
-  options?: { attempts?: number },
+  options?: { attempts?: number; layout?: Layout },
 ): Promise<RunResult> {
   const attempts = options?.attempts ?? DEFAULT_ATTEMPTS;
+  const layout = options?.layout ?? "lines";
   const loaded = loadProgram(input.program);
   if (!loaded.ok) return { ok: false, attempts: 0, error: loaded.error };
 
@@ -50,7 +52,7 @@ export async function run(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let reply: string;
     try {
-      reply = await model.complete(renderPrompt(input.goal, input.program, rejections));
+      reply = await model.complete(renderPrompt(input.goal, loaded.tree, rejections, layout));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { ok: false, attempts: attempt, error: { code: "model-error", message } };
@@ -58,7 +60,7 @@ export async function run(
     const outcome = accept(loaded.tree, reply);
     if (outcome.ok) return { ok: true, attempts: attempt, source: outcome.source };
     last = outcome.error;
-    rejections.push({ response: stripFence(reply), error: errorLine(outcome.error) });
+    rejections.push({ response: stripFence(reply), error: errorLine(outcome.error, outcome.tree) });
   }
   return { ok: false, attempts, error: last };
 }
@@ -95,7 +97,9 @@ function loadProgram(program: string | undefined): { ok: true; tree: Expr | unde
   return { ok: true, tree: parsed.tree };
 }
 
-function accept(tree: Expr | undefined, reply: string): { ok: true; source: string } | { ok: false; error: ContractError } {
+type Outcome = { ok: true; source: string } | { ok: false; error: ContractError; tree?: Expr };
+
+function accept(tree: Expr | undefined, reply: string): Outcome {
   const text = stripFence(reply);
   if (text === "") return { ok: false, error: { code: "empty-response" } };
   if (tree === undefined) {
@@ -113,25 +117,41 @@ function accept(tree: Expr | undefined, reply: string): { ok: true; source: stri
       };
     }
     const checked = check(parsed.tree);
-    if (!checked.ok) return { ok: false, error: checked.error };
+    if (!checked.ok) return { ok: false, error: checked.error, tree: parsed.tree };
     return { ok: true, source: print(parsed.tree) };
   }
-  if (leadingName(text) !== "edits") return { ok: false, error: { code: "expected-edits" } };
-  const edits = parseEdits(text);
-  if (!edits.ok) return edits;
-  const applied = applyAll(tree, edits.edits);
+  const applied = applyEditText(tree, text);
   if (!applied.ok) return applied;
-  const checked = check(applied.tree);
-  if (!checked.ok) return { ok: false, error: checked.error };
   return { ok: true, source: print(applied.tree) };
 }
 
-function applyAll(tree: Expr, edits: readonly RawEdit[]): { ok: true; tree: Expr } | { ok: false; error: EditError } {
+// Parses an (edits ...) list, applies it to a copy of tree and runs the checker on the result.
+// New nodes never take an id from retired, so an id a model saw earlier keeps meaning that node or nothing.
+export function applyEditText(
+  tree: Expr,
+  text: string,
+  retired: ReadonlySet<string> = new Set(),
+): { ok: true; tree: Expr; type: string } | { ok: false; error: ContractError; tree?: Expr } {
+  if (leadingName(text) !== "edits") return { ok: false, error: { code: "expected-edits" } };
+  const edits = parseEdits(text);
+  if (!edits.ok) return edits;
+  const applied = applyAll(tree, edits.edits, retired);
+  if (!applied.ok) return applied;
+  const checked = check(applied.tree);
+  if (!checked.ok) return { ok: false, error: checked.error, tree: applied.tree };
+  return { ok: true, tree: applied.tree, type: checked.type };
+}
+
+function applyAll(
+  tree: Expr,
+  edits: readonly RawEdit[],
+  retired: ReadonlySet<string>,
+): { ok: true; tree: Expr } | { ok: false; error: EditError } {
   let draft = tree;
   for (let at = 0; at < edits.length; at += 1) {
     const raw = edits[at];
     if (raw === undefined) continue;
-    const edit = prepare(draft, raw);
+    const edit = prepare(draft, raw, retired);
     const applied = applyEdits(draft, [edit]);
     if (!applied.ok) return { ok: false, error: { ...applied.error, at } };
     draft = applied.tree;
@@ -139,38 +159,90 @@ function applyAll(tree: Expr, edits: readonly RawEdit[]): { ok: true; tree: Expr
   return { ok: true, tree: draft };
 }
 
-function prepare(tree: Expr, edit: RawEdit): Edit {
+function prepare(tree: Expr, edit: RawEdit, retired: ReadonlySet<string>): Edit {
   if (edit.op === "delete") return { op: "delete", id: edit.id };
-  const node = renumber(edit.expr, collectIds(tree));
+  const taken = collectIds(tree);
+  for (const id of retired) taken.add(id);
+  const node = renumber(edit.expr, taken);
   if (edit.op === "replace") return { op: "replace", id: edit.id, node };
   return { op: "insert", id: edit.id, index: edit.index, node };
 }
 
-function renderPrompt(goal: string, program: string | undefined, rejections: readonly Rejection[]): string {
-  const lines = [
-    "Reply with only one program, or one (edits ...) list. No prose.",
-    "",
-    "(edits (replace id expr) (insert id index expr) (delete id))",
-    "",
-    `goal: ${goal.replace(/\s+/g, " ").trim()}`,
-    "",
-    "program:",
-    program ?? "none",
-  ];
-  for (const rejection of rejections) {
-    lines.push("rejected:", rejection.response.trim(), "", "error:", rejection.error);
+// The grammar every prompt teaches. Writing and editing add their own rules and examples on top,
+// so a model that writes never reads about edits and one that edits never reads write examples.
+export const GRAMMAR = [
+  "language:",
+  "number: 0 12 -4    bool: true false    name: x total_2",
+  "(let name value body)    bind name to value, visible only inside body",
+  "(fn (a b) body)          function; parameters are bare names, no types",
+  "(if cond then else)",
+  "(add a b) (sub a b) (mul a b) (div a b)    numbers to number",
+  "(eq a b) (lt a b) (gt a b) (lte a b) (gte a b)    numbers to bool",
+  "(f a b)                  call f with a and b",
+  "Each form takes exactly the arguments shown. There are no infix operators and no other keywords.",
+];
+
+export const EDIT_RULES = [
+  "edits:",
+  "(edits (replace id expr) (insert id index expr) (delete id))",
+  "Each node of the program is prefixed with its id, like n4:3. Copy ids exactly; never compute them. Ids never appear inside expr.",
+  "replace swaps any node. insert adds an argument to the call with that id. delete removes that call argument.",
+];
+
+export const WRITE_PROMPT = [
+  "Reply with only one program. No prose, no code fences.",
+  "",
+  ...GRAMMAR,
+  "",
+  "examples:",
+  "goal: bind the difference of 8 and 3",
+  "(let x (sub 8 3) x)",
+  "",
+  "goal: define a function that doubles its argument",
+  "(fn (n) (mul n 2))",
+];
+
+export const EDIT_PROMPT = [
+  "Reply with only one (edits ...) list. No prose, no code fences.",
+  "",
+  ...GRAMMAR,
+  "",
+  ...EDIT_RULES,
+  "",
+  "example:",
+  "goal: change 3 to 5",
+  "program: n1:(let x n2:(sub n3:8 n4:3) n5:x)",
+  "(edits (replace n4 5))",
+];
+
+function renderPrompt(goal: string, program: Expr | undefined, rejections: readonly Rejection[], layout: Layout): string {
+  const lines = [...(program === undefined ? WRITE_PROMPT : EDIT_PROMPT), "", `goal: ${goal.replace(/\s+/g, " ").trim()}`];
+  if (program !== undefined) {
+    const shown = compact(program, { ids: true, layout });
+    lines.push(shown.includes("\n") ? `program:\n${shown}` : `program: ${shown}`);
   }
+  for (const rejection of rejections) {
+    lines.push("", "rejected:", rejection.response.trim(), "error:", rejection.error);
+  }
+  if (rejections.length > 0) lines.push("", "Reply again with a corrected answer.");
   return `${lines.join("\n")}\n`;
 }
 
-function errorLine(error: ContractError): string {
+export function errorLine(error: ContractError, tree?: Expr): string {
+  const base = baseLine(error);
+  if (tree === undefined || !("nodeId" in error)) return base;
+  const node = findNode(tree, error.nodeId);
+  return node === undefined ? base : `${base} in ${snippet(node)}`;
+}
+
+function baseLine(error: ContractError): string {
   switch (error.code) {
     case "empty-response":
       return "empty-response";
     case "expected-program":
-      return "expected-program";
+      return "expected-program, write one program like (let x (add 1 2) x)";
     case "expected-edits":
-      return "expected-edits";
+      return "expected-edits, write one list like (edits (replace n4 7))";
     case "parse":
       return `parse ${error.line}:${error.column} ${error.message}`;
     case "response":
@@ -189,8 +261,6 @@ function errorLine(error: ContractError): string {
       return `not-a-function ${error.nodeId} actual ${error.actual}`;
     case "infinite-type":
       return `infinite-type ${error.nodeId} ${error.name}`;
-    case "ambiguous-type":
-      return `ambiguous-type ${error.nodeId} ${error.name}`;
     case "unknown-id":
       return `unknown-id ${error.id} at ${error.at}`;
     case "cannot-delete":

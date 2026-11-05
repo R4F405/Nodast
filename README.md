@@ -77,7 +77,7 @@ Un lenguaje mínimo y cerrado:
 
 - literales, `let`, funciones puras, llamadas, `if`
 - aritmética y comparación
-- tipos simples: `number`, `bool` y funciones
+- tipos simples: `number`, `bool` y funciones, inferidos sin anotar; una función ligada con `let` es genérica, como `(let id (fn (x) x) ...)`
 - operaciones `insert`, `replace` y `delete`
 - un printer, a TypeScript
 - un contrato de entrada y salida para el modelo, con un fixture para probar el círculo sin una API de pago
@@ -87,7 +87,7 @@ El proyecto del PoC se escribe en TypeScript. La IR no es el AST de TypeScript n
 
 ## Qué hay hoy
 
-Parser, printer, checker, operaciones, el bucle con el modelo, el buffer binario y la gramática local del texto compacto. El mismo árbol, checker, printer y binario también están en Rust, en `rust/`. Los tests usan un fixture y no llaman a la red. El cliente real es MiniMax, con la clave fuera del repositorio. MiniMax no puede aplicar esa gramática al muestrear. El detalle está en el [roadmap](ROADMAP.md).
+Parser, printer, checker, operaciones, el bucle con el modelo, el buffer binario y la gramática local del texto compacto. El mismo árbol, checker, printer y binario también están en Rust, en `rust/`. La medición de ese motor está en [BENCH.md](BENCH.md). Los tests usan un fixture y no llaman a la red. El cliente real es MiniMax, con la clave fuera del repositorio. MiniMax no puede aplicar esa gramática al muestrear. El detalle está en el [roadmap](ROADMAP.md).
 
 ## Decisiones cerradas
 
@@ -115,7 +115,7 @@ pnpm ask -- "bind the sum of 1 and 2"
 
 `pnpm ask` lee `.env` y llama a MiniMax. `pnpm test` no.
 
-`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. `cargo test` recorre el motor en Rust. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
+`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. `cargo test` recorre el motor en Rust. `pnpm bench` mide validez, payload, edición y reintentos, y llama a MiniMax. `pnpm bench:engine` mide solo el motor, en local. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licencia
 

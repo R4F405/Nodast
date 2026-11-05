@@ -13,6 +13,8 @@ Qué hay, qué se construye ahora y qué queda fuera hasta que el círculo cierr
 | Binario | Hecho |
 | Gramática del texto compacto | Hecho. MiniMax no puede aplicarla al muestrear |
 | Motor en Rust | Hecho. `cargo test --manifest-path rust/Cargo.toml` |
+| Medición | Hecho. Ver [BENCH.md](BENCH.md) |
+| Tools `find`, `show`, `edit` | Hecho. `src/tools.ts` |
 
 ## PoC
 
@@ -36,7 +38,7 @@ Sobre el árbol ya parseado:
 
 - el árbol está bien formado
 - cada nombre usado está definido
-- los tipos simples cuadran: `number`, `bool` y funciones
+- los tipos simples cuadran: `number`, `bool` y funciones. La inferencia es Hindley-Milner: una función ligada con `let` es genérica y un tipo que nada fija queda como variable, así que `(fn (f) (f 5))` es `((number) -> a) -> a` y no un error
 
 El checker devuelve un error estructurado, no un párrafo. Ese error es lo que volvería al modelo.
 
@@ -109,8 +111,10 @@ En este orden, salvo que una medición diga lo contrario:
 1. **Binario.** **Estado: hecho.** El árbol se aplana a un buffer little-endian (`NDS1`, versión 1) y se vuelve a cargar sin parsear el texto. `encode` no comprueba tipos: el checker va antes. El motor en Rust leerá este mismo buffer.
 2. **Gramática en el decodificador.** **Estado: hecho en local.** `grammar` dice si un programa o una lista `(edits ...)` ya puede cerrarse, y `allows` dice si el carácter siguiente seguiría siendo válido. MiniMax-M3.1-Flash no enmascara el muestreo: su API no acepta una gramática ni `response_format`. El cliente no envía un parámetro que el modelo ignoraría. La máscara queda lista para un runtime que sí pueda usarla.
 3. **Motor en Rust.** **Estado: hecho.** Vive en `rust/` y repite el árbol, el parser, el checker, el printer, las operaciones y el binario. Se prueba con `cargo test --manifest-path rust/Cargo.toml`. TypeScript del PoC sigue siendo la referencia de comportamiento.
-4. **Más printers.** Otro lenguaje de salida leyendo la misma IR. Solo cuando el printer de TypeScript lleve un tiempo estable.
-5. **Evaluador.** Ejecutar el árbol validado sin pasar por el fuente, si hace falta para tests o para un runtime.
+4. **Medición.** **Estado: hecho** el 3 de noviembre de 2026. [BENCH.md](BENCH.md) compara Pass@1, payload, edición y reintentos contra texto plano. En esa pasada el texto plano acertó a la primera y Nodast no; el buffer pesa más que el fuente; la edición local queda por debajo de 0.01 ms y reescribir el archivo con el modelo tardó 787 ms. La velocidad del motor está en [bench/engine.md](bench/engine.md).
+5. **Tools.** **Estado: hecho** el 5 de noviembre de 2026. El modelo trabaja sobre una sesión con `find`, `show` y `edit` en vez de leer el árbol entero. Un programa de hasta 256 nodos va entero en el prompt; uno mayor, solo como resumen. `edit` responde con el trozo ya cambiado, acepta `done` para cerrar sin otra llamada y nunca da a un nodo nuevo un id que el modelo ya vio. En la pasada del 5 de noviembre, con 5 repeticiones, acertó 15/15 en cadenas de 50 y de 500 `let`; en la de 500 usó 3231 `prompt_tokens` y 300 `completion_tokens` por edición, frente a 5749 y 5851 del texto plano. Con `gpt-6.1-sol` de OpenAI ([bench/openai.md](bench/openai.md)), las cuatro variantes de edición aciertan 15/15 a la primera en los dos tamaños; en la cadena de 500 las tools usan 2 llamadas, 1122 `prompt_tokens` y 57 `completion_tokens`, frente a 5559 y 5513 del texto plano, y tardan 4.5 s frente a 36 s. Frente a un agente de texto con `grep`, `read` y `replace`, la ventaja desaparece: en la cadena de 500 ese agente usa 585 `prompt_tokens` y 63 `completion_tokens`, con la misma latencia y el mismo acierto. El ahorro viene de editar por partes, no del formato. Con el prompt reducido a una línea de gramática y `edit` con campos sueltos, Nodast baja a 772 `prompt_tokens` frente a 581, casi empatado. Al renombrar `rate` a `scale` junto a `rate_cap`, Nodast gana: `rename` sigue los ámbitos y lo hace en una sola edición, y en 400 pasos usa 907 `prompt_tokens`, 55 `completion_tokens` y 4.1 s frente a 2613, 130 y 11.6 s del texto con tools, que suele reemplazar `rate` en todo el archivo, romper `rate_cap` y arreglarlo después. Al añadir un parámetro a una función llamada en 200 sitios, `op param` cambia la función y todas las llamadas a la vez: 2182 `prompt_tokens`, 136 `completion_tokens` y 9.1 s, frente a 12045, 174 y 13.7 s del texto con tools, que tiene que tocar cada llamada. Esa pasada se hizo aparte, con 5 repeticiones, y no está todavía en [bench/openai.md](bench/openai.md).
+6. **Más printers.** Otro lenguaje de salida leyendo la misma IR. Solo cuando el printer de TypeScript lleve un tiempo estable.
+7. **Evaluador.** Ejecutar el árbol validado sin pasar por el fuente, si hace falta para tests o para un runtime.
 
 ## Fuera de alcance
 
