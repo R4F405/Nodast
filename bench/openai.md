@@ -12,14 +12,14 @@ Si el modelo mete un bloque `<think>` en el texto, como hace MiniMax, se quita a
 
 |  | Nodast | Texto plano |
 | --- | ---: | ---: |
-| Pass@1, válido al primer intento | 55/60 (92%) | 60/60 (100%) |
+| Pass@1, válido al primer intento | 60/60 (100%) | 60/60 (100%) |
 | Válido en ≤ 3 intentos | 60/60 (100%) | 60/60 (100%) |
 | Correcto en ≤ 3 intentos (oráculo) | 60/60 (100%) | 60/60 (100%) |
-| Intentos medios | 1.08 | 1.00 |
-| `completion_tokens` medios, todos los intentos | 28 | 25 |
-| Respuesta visible, tokens léxicos medios | 20 | 21 |
-| Respuesta visible, bytes medios | 35 | 44 |
-| Latencia media, todos los intentos | 2132 ms | 2126 ms |
+| Intentos medios | 1.00 | 1.00 |
+| `completion_tokens` medios, todos los intentos | 23 | 25 |
+| Respuesta visible, tokens léxicos medios | 19 | 21 |
+| Respuesta visible, bytes medios | 34 | 45 |
+| Latencia media, todos los intentos | 1931 ms | 2116 ms |
 | Fallos de API excluidos | 0 | 0 |
 | Fallos | — | — |
 
@@ -58,7 +58,7 @@ Una cadena de `let` donde cada paso suma o resta una constante. Nodast sin tools
 | Llamadas al modelo | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | Respuesta visible, tokens léxicos medios | 0 | 9 | 9 | 0 | 357 |
 | Respuesta visible, bytes medios | 65 | 28 | 28 | 87 | 1246 |
-| Latencia media, todos los intentos | 2174 ms | 1768 ms | 1974 ms | 2260 ms | 5247 ms |
+| Latencia media, todos los intentos | 2238 ms | 1831 ms | 1941 ms | 2155 ms | 5029 ms |
 | Fallos de API excluidos | 0 | 0 | 0 | 0 | 0 |
 | Fallos | — | — | — | — | — |
 
@@ -84,7 +84,7 @@ Una cadena de `let` donde cada paso suma o resta una constante. Nodast sin tools
 | Llamadas al modelo | 2.0 | 1.0 | 1.0 | 2.0 | 1.0 |
 | Respuesta visible, tokens léxicos medios | 0 | 9 | 9 | 0 | 3507 |
 | Respuesta visible, bytes medios | 103 | 30 | 30 | 107 | 13298 |
-| Latencia media, todos los intentos | 4116 ms | 2125 ms | 1963 ms | 4351 ms | 33298 ms |
+| Latencia media, todos los intentos | 4636 ms | 2058 ms | 1840 ms | 4451 ms | 32773 ms |
 | Fallos de API excluidos | 0 | 0 | 0 | 0 | 0 |
 | Fallos | — | — | — | — | — |
 
@@ -100,17 +100,17 @@ Una cadena de `let` donde cada paso suma o resta una constante. Nodast sin tools
 
 |  | Nodast, tools | Nodast, ids por líneas | Nodast, ids en una línea | Texto, tools | Texto plano |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Pass@1, válido al primer intento | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 2/5 (40%) | 5/5 (100%) |
+| Pass@1, válido al primer intento | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 1/5 (20%) | 5/5 (100%) |
 | Válido en ≤ 3 intentos | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
 | Correcto en ≤ 3 intentos (oráculo) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
 | Intentos medios | 1.00 | 1.00 | 1.00 | 2.00 | 1.00 |
-| `completion_tokens` medios, todos los intentos | 34 | 684 | 679 | 66 | 517 |
+| `completion_tokens` medios, todos los intentos | 34 | 677 | 683 | 68 | 517 |
 | `prompt_tokens` del primer intento | 1489 | 1443 | 1440 | 778 | 565 |
-| `prompt_tokens` totales, todas las llamadas | 1489 | 1443 | 1440 | 1614 | 565 |
+| `prompt_tokens` totales, todas las llamadas | 1489 | 1443 | 1440 | 1618 | 565 |
 | Llamadas al modelo | 1.0 | 1.0 | 1.0 | 2.0 | 1.0 |
 | Respuesta visible, tokens léxicos medios | 0 | 543 | 543 | 0 | 377 |
-| Respuesta visible, bytes medios | 62 | 1468 | 1468 | 124 | 1257 |
-| Latencia media, todos los intentos | 2372 ms | 7601 ms | 7151 ms | 5356 ms | 4694 ms |
+| Respuesta visible, bytes medios | 62 | 1468 | 1468 | 126 | 1257 |
+| Latencia media, todos los intentos | 2161 ms | 7297 ms | 6829 ms | 4699 ms | 4714 ms |
 | Fallos de API excluidos | 0 | 0 | 0 | 0 | 0 |
 | Fallos | — | — | — | — | — |
 
@@ -120,19 +120,19 @@ Una cadena de `let` donde cada paso suma o resta una constante. Nodast sin tools
 
 |  | Nodast, tools | Nodast, ids por líneas | Nodast, ids en una línea | Texto, tools | Texto plano |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Pass@1, válido al primer intento | 5/5 (100%) | 5/5 (100%) | 2/5 (40%) | 1/5 (20%) | 5/5 (100%) |
+| Pass@1, válido al primer intento | 5/5 (100%) | 5/5 (100%) | 3/5 (60%) | 5/5 (100%) | 5/5 (100%) |
 | Válido en ≤ 3 intentos | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
-| Correcto en ≤ 3 intentos (oráculo) | 5/5 (100%) | 5/5 (100%) | 4/5 (80%) | 5/5 (100%) | 5/5 (100%) |
-| Intentos medios | 1.00 | 1.00 | 1.60 | 2.40 | 1.00 |
-| `completion_tokens` medios, todos los intentos | 55 | 5700 | 8772 | 130 | 4927 |
+| Correcto en ≤ 3 intentos (oráculo) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
+| Intentos medios | 1.00 | 1.00 | 1.40 | 2.00 | 1.00 |
+| `completion_tokens` medios, todos los intentos | 55 | 5641 | 8504 | 80 | 4927 |
 | `prompt_tokens` del primer intento | 358 | 12751 | 12748 | 270 | 4975 |
-| `prompt_tokens` totales, todas las llamadas | 907 | 12751 | 23906 | 2613 | 4975 |
-| Llamadas al modelo | 2.0 | 1.0 | 1.6 | 5.0 | 1.0 |
-| Respuesta visible, tokens léxicos medios | 0 | 5223 | 7321 | 0 | 3617 |
-| Respuesta visible, bytes medios | 97 | 15265 | 21385 | 194 | 13230 |
-| Latencia media, todos los intentos | 4071 ms | 38598 ms | 69479 ms | 11638 ms | 29538 ms |
+| `prompt_tokens` totales, todas las llamadas | 907 | 12751 | 20187 | 1187 | 4975 |
+| Llamadas al modelo | 2.0 | 1.0 | 1.4 | 3.0 | 1.0 |
+| Respuesta visible, tokens léxicos medios | 0 | 5223 | 7314 | 0 | 3617 |
+| Respuesta visible, bytes medios | 97 | 15255 | 21355 | 126 | 13230 |
+| Latencia media, todos los intentos | 4370 ms | 37057 ms | 60165 ms | 6742 ms | 29101 ms |
 | Fallos de API excluidos | 0 | 0 | 0 | 0 | 0 |
-| Fallos | — | — | wrong-result ×1 | — | — |
+| Fallos | — | — | — | — | — |
 
 ## Payload
 

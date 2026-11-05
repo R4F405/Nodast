@@ -83,6 +83,27 @@ test("renames a binding and only the uses that resolve to it", () => {
   assert.equal(change(s, { op: "rename", id: "n1", expr: "let" }), "rejected: bad name let");
 });
 
+test("adds a parameter and passes an argument at every call", () => {
+  const opened = open("(let step (fn (x) (add x 3)) (let a (step 1) (let b (step a) (let step 0 (add b step)))))");
+  if (!opened.ok) throw new Error(opened.error);
+  const s = opened.session;
+  assert.equal(change(s, { op: "param", id: "n1", name: "k", expr: "2" }), "ok, type number, step takes (x k), updated 2 calls");
+  assert.equal(
+    printed(s),
+    "const step = (x, k) => x + 3;\nconst a = step(1, 2);\nconst b = step(a, 2);\n(() => {\n  const step = 0;\n  return b + step;\n})();\n",
+  );
+  assert.equal(change(s, { op: "param", id: "n1", name: "j", expr: "true", index: 0 }), "ok, type number, step takes (j x k), updated 2 calls");
+  assert.equal(change(s, { op: "param", id: "n1", name: "x", expr: "1" }), "rejected: name x is already used in step");
+  assert.equal(change(s, { op: "param", id: "n1", name: "m", expr: "1", index: 9 }), "rejected: index 9 is outside 0..3");
+  assert.equal(change(s, { op: "param", id: "n1", expr: "1" }), "rejected: param needs name");
+});
+
+test("refuses a parameter when the function is also passed as a value", () => {
+  const opened = open("(let f (fn (x) x) (let g (fn (h) (h 1)) (add (f 2) (g f))))");
+  if (!opened.ok) throw new Error(opened.error);
+  assert.match(change(opened.session, { op: "param", id: "n1", name: "y", expr: "0" }), /^rejected: f is also used as a value at n\d+/);
+});
+
 test("never reuses an id the session handed out", () => {
   const { session: s } = session();
   edit(s, "(replace n10 7)");

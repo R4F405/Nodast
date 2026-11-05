@@ -104,13 +104,22 @@ fn checks_the_same_programs_as_the_typescript_reference() {
         check(&tree("(fn (x) (x x))")).unwrap_err(),
         CheckError::InfiniteType { node_id: "n2".into(), name: "x".into() }
     );
+    assert_eq!(check(&tree("(fn (x) x)")).unwrap(), "(a) -> a");
+    assert_eq!(check(&tree("(fn (x y) (eq x y))")).unwrap(), "(a, a) -> bool");
+    assert_eq!(check(&tree("(fn (f) (f 5))")).unwrap(), "((number) -> a) -> a");
+    assert_eq!(check(&tree("(fn (f x) (f (f x)))")).unwrap(), "((a) -> a, a) -> a");
+    assert_eq!(check(&tree("(let id (fn (x) x) (if (id true) (id 1) 2))")).unwrap(), "number");
     assert_eq!(
-        check(&tree("(fn (x) x)")).unwrap_err(),
-        CheckError::AmbiguousType { node_id: "n1".into(), name: "x".into() }
+        check(&tree("(let same (fn (x y) (eq x y)) (if (same true false) (same 1 2) false))")).unwrap(),
+        "bool"
     );
     assert_eq!(
-        check(&tree("(fn (f) (f 1))")).unwrap_err(),
-        CheckError::AmbiguousType { node_id: "n2".into(), name: "result".into() }
+        check(&tree("(fn (f) (if (f true) (f 1) 2))")).unwrap_err(),
+        CheckError::TypeMismatch { node_id: "n6".into(), expected: "bool".into(), actual: "number".into() }
+    );
+    assert_eq!(
+        check(&tree("(let same (fn (x y) (eq x y)) (same (fn (a) a) (fn (b) b)))")).unwrap_err(),
+        CheckError::TypeMismatch { node_id: "n6".into(), expected: "number | bool".into(), actual: "(a) -> a".into() }
     );
     let duplicated = Expr::Bin {
         id: "n1".into(),
@@ -184,5 +193,18 @@ fn roundtrips_the_flat_buffer() {
     for source in ["(let x (add 1 2) x)", "(fn (x y) (add x y))", "(fn () 1)", "(f)", "(if (lt x 0) 0 x)", "-3", "true"] {
         let parsed = tree(source);
         assert_eq!(decode(&encode(&parsed)).unwrap(), parsed);
+    }
+}
+
+#[test]
+fn gives_a_let_that_reuses_or_reads_its_own_name_a_fresh_scope() {
+    let cases = [
+        ("(let k 2 (let a (add k 1) (let k 3 (add a k))))", "const k = 2;\nconst a = k + 1;\n(() => {\n  const k = 3;\n  return a + k;\n})();\n"),
+        ("(let k 2 (let k (add k 1) k))", "const k = 2;\n((k) => k)(k + 1);\n"),
+        ("(let k 2 (add 1 (let k (add k 1) k)))", "const k = 2;\n1 + ((k) => k)(k + 1);\n"),
+        ("(fn (x) (let x (add x 1) x))", "((x) => {\n  return ((x) => x)(x + 1);\n});\n"),
+    ];
+    for (source, want) in cases {
+        assert_eq!(print(&tree(source)), want, "{source}");
     }
 }

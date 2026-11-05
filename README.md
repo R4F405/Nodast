@@ -77,7 +77,7 @@ Un lenguaje mínimo y cerrado:
 
 - literales, `let`, funciones puras, llamadas, `if`
 - aritmética y comparación
-- tipos simples: `number`, `bool` y funciones
+- tipos simples: `number`, `bool` y funciones, inferidos sin anotar; una función ligada con `let` es genérica, como `(let id (fn (x) x) ...)`
 - operaciones `insert`, `replace` y `delete`
 - un printer, a TypeScript
 - un contrato de entrada y salida para el modelo, con un fixture para probar el círculo sin una API de pago

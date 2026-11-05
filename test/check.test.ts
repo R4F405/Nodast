@@ -117,9 +117,26 @@ test("rejects a call that is not a function or has the wrong arity", () => {
   expectError("(fn (x) (x x))", { code: "infinite-type", nodeId: "n2", name: "x" });
 });
 
-test("rejects a function whose type never becomes concrete", () => {
-  expectError("(fn (x) x)", { code: "ambiguous-type", nodeId: "n1", name: "x" });
-  expectError("(fn (x) 1)", { code: "ambiguous-type", nodeId: "n1", name: "x" });
-  expectError("(fn (x) (eq x x))", { code: "ambiguous-type", nodeId: "n1", name: "x" });
-  expectError("(fn (f) (f 1))", { code: "ambiguous-type", nodeId: "n2", name: "result" });
+test("keeps a type that never becomes concrete as a type variable", () => {
+  expectType("(fn (x) x)", "(a) -> a");
+  expectType("(fn (x) 1)", "(a) -> number");
+  expectType("(fn (x y) (eq x y))", "(a, a) -> bool");
+  expectType("(fn (f) (f 5))", "((number) -> a) -> a");
+  expectType("(fn (f x) (f (f x)))", "((a) -> a, a) -> a");
+});
+
+test("lets a let-bound function be used at several types", () => {
+  expectType("(let id (fn (x) x) (if (id true) (id 1) 2))", "number");
+  expectType("(let apply (fn (f x) (f x)) (apply (fn (b) (if b 1 0)) (apply (fn (n) (lt n 3)) 2)))", "number");
+  expectType("(let same (fn (x y) (eq x y)) (if (same true false) (same 1 2) false))", "bool");
+});
+
+test("keeps parameters monomorphic and the eq constraint on copies", () => {
+  expectError("(fn (f) (if (f true) (f 1) 2))", { code: "type-mismatch", nodeId: "n6", expected: "bool", actual: "number" });
+  expectError("(let same (fn (x y) (eq x y)) (same (fn (a) a) (fn (b) b)))", {
+    code: "type-mismatch",
+    nodeId: "n6",
+    expected: "number | bool",
+    actual: "(a) -> a",
+  });
 });

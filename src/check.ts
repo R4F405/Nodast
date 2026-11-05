@@ -6,8 +6,7 @@ export type CheckError =
   | { code: "type-mismatch"; nodeId: string; expected: string; actual: string }
   | { code: "arity-mismatch"; nodeId: string; expected: number; actual: number }
   | { code: "not-a-function"; nodeId: string; actual: string }
-  | { code: "infinite-type"; nodeId: string; name: string }
-  | { code: "ambiguous-type"; nodeId: string; name: string };
+  | { code: "infinite-type"; nodeId: string; name: string };
 
 export type CheckResult = { ok: true; type: string } | { ok: false; error: CheckError };
 
@@ -18,7 +17,10 @@ type Type = { kind: "number" } | { kind: "bool" } | TFn | TVar;
 const NUMBER: Type = { kind: "number" };
 const BOOL: Type = { kind: "bool" };
 
-type Env = Map<string, Type>;
+// A let-bound name is generic over vars: each use gets fresh copies of them, so (let id (fn (x) x) ...)
+// can be used on numbers and on bools. Parameters and other names have no vars.
+type Scheme = { vars: ReadonlySet<number>; type: Type };
+type Env = Map<string, Scheme>;
 
 class CheckFailure extends Error {
   readonly detail: CheckError;
@@ -50,7 +52,7 @@ class Checker {
       case "var": {
         const found = env.get(expr.name);
         if (found === undefined) this.fail({ code: "undefined-name", nodeId: expr.id, name: expr.name });
-        return found;
+        return this.instantiate(found);
       }
       case "add":
       case "sub":
@@ -71,7 +73,7 @@ class Checker {
       }
       case "let": {
         const value = this.infer(expr.value, env);
-        return this.infer(expr.body, extend(env, expr.name, value));
+        return this.infer(expr.body, extend(env, expr.name, this.generalize(value, env)));
       }
       case "fn": {
         let bodyEnv = env;
@@ -79,7 +81,7 @@ class Checker {
         for (const name of expr.params) {
           const param = this.fresh(name, expr.id);
           params.push(param);
-          bodyEnv = extend(bodyEnv, name, param);
+          bodyEnv = extend(bodyEnv, name, { vars: NONE, type: param });
         }
         const ret = this.infer(expr.body, bodyEnv);
         return { kind: "fn", params, ret };
@@ -96,31 +98,66 @@ class Checker {
     }
   }
 
-  show(type: Type): string {
+  // Free vars print as a, b, c in order of first appearance, so (fn (f) (f 5)) is ((number) -> a) -> a.
+  show(type: Type, names: Map<number, string> = new Map()): string {
     const root = this.resolve(type);
     switch (root.kind) {
       case "number":
         return "number";
       case "bool":
         return "bool";
-      case "var":
-        return "?";
+      case "var": {
+        let name = names.get(root.id);
+        if (name === undefined) {
+          name = letter(names.size);
+          names.set(root.id, name);
+        }
+        return name;
+      }
       case "fn": {
-        const params = root.params.map((param) => this.show(param)).join(", ");
-        return `(${params}) -> ${this.show(root.ret)}`;
+        const params = root.params.map((param) => this.show(param, names)).join(", ");
+        return `(${params}) -> ${this.show(root.ret, names)}`;
       }
     }
   }
 
-  firstFree(type: Type): TVar | undefined {
-    const root = this.resolve(type);
-    if (root.kind === "var") return root;
-    if (root.kind !== "fn") return undefined;
-    for (const param of root.params) {
-      const found = this.firstFree(param);
-      if (found) return found;
+  private generalize(type: Type, env: Env): Scheme {
+    const free = this.freeVars(type, new Set());
+    if (free.size === 0) return { vars: NONE, type };
+    const outside = new Set<number>();
+    for (const scheme of env.values()) {
+      for (const id of this.freeVars(scheme.type, new Set())) if (!scheme.vars.has(id)) outside.add(id);
     }
-    return this.firstFree(root.ret);
+    for (const id of outside) free.delete(id);
+    return { vars: free, type };
+  }
+
+  private instantiate(scheme: Scheme): Type {
+    if (scheme.vars.size === 0) return scheme.type;
+    const copies = new Map<number, TVar>();
+    const copy = (type: Type): Type => {
+      const root = this.resolve(type);
+      if (root.kind === "fn") return { kind: "fn", params: root.params.map(copy), ret: copy(root.ret) };
+      if (root.kind !== "var" || !scheme.vars.has(root.id)) return root;
+      let fresh = copies.get(root.id);
+      if (fresh === undefined) {
+        fresh = this.fresh(root.name, root.nodeId);
+        if (this.primitive.has(root.id)) this.primitive.add(fresh.id);
+        copies.set(root.id, fresh);
+      }
+      return fresh;
+    };
+    return copy(scheme.type);
+  }
+
+  private freeVars(type: Type, into: Set<number>): Set<number> {
+    const root = this.resolve(type);
+    if (root.kind === "var") into.add(root.id);
+    if (root.kind === "fn") {
+      for (const param of root.params) this.freeVars(param, into);
+      this.freeVars(root.ret, into);
+    }
+    return into;
   }
 
   private inferOperands(
@@ -260,9 +297,16 @@ class Checker {
   }
 }
 
-function extend(env: Env, name: string, type: Type): Env {
+const NONE: ReadonlySet<number> = new Set();
+
+function letter(index: number): string {
+  const base = String.fromCharCode(97 + (index % 26));
+  return index < 26 ? base : `${base}${Math.floor(index / 26)}`;
+}
+
+function extend(env: Env, name: string, scheme: Scheme): Env {
   const next = new Map(env);
-  next.set(name, type);
+  next.set(name, scheme);
   return next;
 }
 
@@ -298,8 +342,6 @@ export function check(expr: Expr): CheckResult {
   try {
     checker.assertUnique(expr, new Set());
     const type = checker.infer(expr, new Map());
-    const free = checker.firstFree(type);
-    if (free) return { ok: false, error: { code: "ambiguous-type", nodeId: free.nodeId, name: free.name } };
     return { ok: true, type: checker.show(type) };
   } catch (error) {
     if (error instanceof CheckFailure) return { ok: false, error: error.detail };

@@ -10,7 +10,6 @@ pub enum CheckError {
     ArityMismatch { node_id: String, expected: usize, actual: usize },
     NotAFunction { node_id: String, actual: String },
     InfiniteType { node_id: String, name: String },
-    AmbiguousType { node_id: String, name: String },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -19,6 +18,20 @@ enum Type {
     Bool,
     Fn { params: Vec<Type>, ret: Box<Type> },
     Var { id: usize, name: String, node_id: String },
+}
+
+// A let-bound name is generic over vars: each use gets fresh copies of them, so (let id (fn (x) x) ...)
+// can be used on numbers and on bools. Parameters and other names have no vars.
+#[derive(Clone, Debug)]
+struct Scheme {
+    vars: HashSet<usize>,
+    ty: Type,
+}
+
+type Env = HashMap<String, Scheme>;
+
+fn mono(ty: Type) -> Scheme {
+    Scheme { vars: HashSet::new(), ty }
 }
 
 struct Checker {
@@ -38,14 +51,17 @@ impl Checker {
         Ok(())
     }
 
-    fn infer(&mut self, expr: &Expr, env: &HashMap<String, Type>) -> Result<Type, CheckError> {
+    fn infer(&mut self, expr: &Expr, env: &Env) -> Result<Type, CheckError> {
         match expr {
             Expr::Num { .. } => Ok(Type::Number),
             Expr::Bool { .. } => Ok(Type::Bool),
-            Expr::Var { id, name, .. } => env.get(name).cloned().ok_or_else(|| CheckError::UndefinedName {
-                node_id: id.clone(),
-                name: name.clone(),
-            }),
+            Expr::Var { id, name, .. } => {
+                let scheme = env.get(name).cloned().ok_or_else(|| CheckError::UndefinedName {
+                    node_id: id.clone(),
+                    name: name.clone(),
+                })?;
+                Ok(self.instantiate(&scheme))
+            }
             Expr::Bin { op, left, right, id } if op.name() == "lt" || op.name() == "gt" || op.name() == "lte" || op.name() == "gte" => {
                 let left_ty = self.infer(left, env)?;
                 let right_ty = self.infer(right, env)?;
@@ -69,8 +85,9 @@ impl Checker {
             }
             Expr::Let { name, value, body, .. } => {
                 let value_ty = self.infer(value, env)?;
+                let scheme = self.generalize(value_ty, env);
                 let mut next = env.clone();
-                next.insert(name.clone(), value_ty);
+                next.insert(name.clone(), scheme);
                 self.infer(body, &next)
             }
             Expr::Fn { id, params, body } => {
@@ -79,7 +96,7 @@ impl Checker {
                 for name in params {
                     let param = self.fresh(name, id);
                     types.push(param.clone());
-                    body_env.insert(name.clone(), param);
+                    body_env.insert(name.clone(), mono(param));
                 }
                 let ret = self.infer(body, &body_env)?;
                 Ok(Type::Fn { params: types, ret: Box::new(ret) })
@@ -101,7 +118,7 @@ impl Checker {
         id: &str,
         callee: &Expr,
         args: &[Expr],
-        env: &HashMap<String, Type>,
+        env: &Env,
     ) -> Result<Type, CheckError> {
         let inferred = self.infer(callee, env)?;
         let callee_ty = self.resolve(&inferred);
@@ -261,44 +278,113 @@ impl Checker {
     }
 
     fn show(&mut self, ty: &Type) -> String {
+        self.show_named(ty, &mut Vec::new())
+    }
+
+    // Free vars print as a, b, c in order of first appearance, so (fn (f) (f 5)) is ((number) -> a) -> a.
+    fn show_named(&mut self, ty: &Type, names: &mut Vec<usize>) -> String {
         let root = self.resolve(ty);
         match root {
             Type::Number => "number".to_string(),
             Type::Bool => "bool".to_string(),
-            Type::Var { .. } => "?".to_string(),
+            Type::Var { id, .. } => {
+                let index = match names.iter().position(|seen| *seen == id) {
+                    Some(index) => index,
+                    None => {
+                        names.push(id);
+                        names.len() - 1
+                    }
+                };
+                letter(index)
+            }
             Type::Fn { params, ret } => {
                 let mut shown = Vec::new();
                 for param in params {
-                    shown.push(self.show(&param));
+                    shown.push(self.show_named(&param, names));
                 }
-                format!("({}) -> {}", shown.join(", "), self.show(&ret))
+                format!("({}) -> {}", shown.join(", "), self.show_named(&ret, names))
             }
         }
     }
 
-    fn first_free(&mut self, ty: &Type) -> Option<Type> {
+    fn generalize(&mut self, ty: Type, env: &Env) -> Scheme {
+        let mut free = HashSet::new();
+        self.free_vars(&ty, &mut free);
+        if free.is_empty() {
+            return mono(ty);
+        }
+        for scheme in env.values() {
+            let mut inside = HashSet::new();
+            self.free_vars(&scheme.ty, &mut inside);
+            for id in inside {
+                if !scheme.vars.contains(&id) {
+                    free.remove(&id);
+                }
+            }
+        }
+        Scheme { vars: free, ty }
+    }
+
+    fn instantiate(&mut self, scheme: &Scheme) -> Type {
+        if scheme.vars.is_empty() {
+            return scheme.ty.clone();
+        }
+        let mut copies = HashMap::new();
+        self.copy(&scheme.ty, &scheme.vars, &mut copies)
+    }
+
+    fn copy(&mut self, ty: &Type, vars: &HashSet<usize>, copies: &mut HashMap<usize, Type>) -> Type {
         let root = self.resolve(ty);
         match root {
-            Type::Var { .. } => Some(root),
             Type::Fn { params, ret } => {
-                for param in params {
-                    if let Some(found) = self.first_free(&param) {
-                        return Some(found);
+                let params = params.iter().map(|param| self.copy(param, vars, copies)).collect();
+                Type::Fn { params, ret: Box::new(self.copy(&ret, vars, copies)) }
+            }
+            Type::Var { id, ref name, ref node_id } if vars.contains(&id) => {
+                if let Some(fresh) = copies.get(&id) {
+                    return fresh.clone();
+                }
+                let fresh = self.fresh(name, node_id);
+                if self.primitive.contains(&id) {
+                    if let Type::Var { id: fresh_id, .. } = &fresh {
+                        self.primitive.insert(*fresh_id);
                     }
                 }
-                self.first_free(&ret)
+                copies.insert(id, fresh.clone());
+                fresh
             }
-            _ => None,
+            other => other,
         }
+    }
+
+    fn free_vars(&mut self, ty: &Type, into: &mut HashSet<usize>) {
+        match self.resolve(ty) {
+            Type::Var { id, .. } => {
+                into.insert(id);
+            }
+            Type::Fn { params, ret } => {
+                for param in &params {
+                    self.free_vars(param, into);
+                }
+                self.free_vars(&ret, into);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn letter(index: usize) -> String {
+    let base = char::from(b'a' + (index % 26) as u8);
+    if index < 26 {
+        base.to_string()
+    } else {
+        format!("{base}{}", index / 26)
     }
 }
 
 pub fn check(expr: &Expr) -> Result<String, CheckError> {
     let mut checker = Checker { next_var: 0, bound: HashMap::new(), primitive: HashSet::new() };
     checker.assert_unique(expr, &mut HashSet::new())?;
-    let ty = checker.infer(expr, &HashMap::new())?;
-    if let Some(Type::Var { node_id, name, .. }) = checker.first_free(&ty) {
-        return Err(CheckError::AmbiguousType { node_id, name });
-    }
+    let ty = checker.infer(expr, &Env::new())?;
     Ok(checker.show(&ty))
 }

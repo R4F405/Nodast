@@ -6,6 +6,8 @@ export type Oracle =
   | { value: number | boolean }
   // A rename keeps the value, so the file itself must match too, ignoring whitespace.
   | { value: number | boolean; source: string }
+  // Probes are guest expressions run after the file, like step(1, 5), to check a shape the value alone hides.
+  | { value: number | boolean; probes: Array<[string, number | boolean]> }
   // Each call gives the arguments as JavaScript source, so they are built inside the sandbox.
   | { calls: Array<[string, number | boolean]> };
 
@@ -81,6 +83,25 @@ export function renameTask(source: string): Goal {
   return {
     goal: "rename the variable rate to scale everywhere; rate_cap keeps its name",
     oracle: { value: Number(value.text), source: expected },
+  };
+}
+
+// A helper called once per step. Widening it means changing the fn and every call, which a text replace
+// cannot do in one go since each call has its own argument.
+export function steps(length: number): string {
+  let body = `v${length}`;
+  for (let i = length; i >= 1; i -= 1) body = `(let v${i} (add v${i - 1} (step ${i})) ${body})`;
+  return `(let step (fn (x) (add x 3)) (let v0 0 ${body}))`;
+}
+
+// The probe calls step with a scale other than 2, so multiplying by 2 inside step without a new
+// parameter gives the right value but fails.
+export function paramTask(length: number): Goal {
+  let value = 0;
+  for (let i = 1; i <= length; i += 1) value += (i + 3) * 2;
+  return {
+    goal: "give step a new last parameter scale and make it return (x + 3) * scale; every existing call to step passes 2",
+    oracle: { value, probes: [["step(1, 5)", 20]] },
   };
 }
 
@@ -191,6 +212,12 @@ export function judge(source: string, oracle: Oracle): string | null {
   if ("value" in oracle) {
     if (!same(value, oracle.value)) return `expected ${String(oracle.value)} got ${value.text}`;
     if ("source" in oracle && squeeze(stripFence(source)) !== squeeze(oracle.source)) return "file differs from the expected rename";
+    if ("probes" in oracle) {
+      for (const [code, want] of oracle.probes) {
+        const got = describeIn(guest.ctx, code);
+        if (!same(got, want)) return `${code} expected ${String(want)} got ${got.text}`;
+      }
+    }
     return null;
   }
   if (value.kind !== "function") return `expected a function got ${value.text}`;

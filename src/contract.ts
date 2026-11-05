@@ -261,8 +261,6 @@ function baseLine(error: ContractError): string {
       return `not-a-function ${error.nodeId} actual ${error.actual}`;
     case "infinite-type":
       return `infinite-type ${error.nodeId} ${error.name}`;
-    case "ambiguous-type":
-      return `ambiguous-type ${error.nodeId} ${error.name}`;
     case "unknown-id":
       return `unknown-id ${error.id} at ${error.at}`;
     case "cannot-delete":

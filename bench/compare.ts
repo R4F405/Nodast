@@ -8,8 +8,10 @@ import { change, find, open, printed, show, view, type Change, type FindQuery, t
 import {
   editTasks,
   GOALS,
+  paramTask,
   rates,
   renameTask,
+  steps,
   type Goal,
   bush,
   chain,
@@ -243,6 +245,7 @@ function track(loop: Loop, reply: Reply): void {
 async function nodastLoop(goal: string, oracle: Oracle, program?: string, layout?: Layout): Promise<Loop> {
   const loop = blank();
   let lastReply = "";
+  const replies: string[] = [];
   const result = await run(
     program === undefined ? { goal } : { goal, program },
     {
@@ -250,12 +253,15 @@ async function nodastLoop(goal: string, oracle: Oracle, program?: string, layout
         const reply = await ask(prompt);
         track(loop, reply);
         lastReply = reply.content;
+        replies.push(reply.content);
         return reply.content;
       },
     },
     layout === undefined ? { attempts: ATTEMPTS } : { attempts: ATTEMPTS, layout },
   );
   loop.attempts = result.attempts;
+  // Every reply of a loop that needed a retry, so first-try failures can be read later.
+  if (result.attempts > 1) log({ side: `nodast-${layout ?? "write"}-retry`, goal, replies });
   if (!result.ok) {
     loop.infra = result.error.code === "model-error";
     loop.error = result.error.code;
@@ -291,13 +297,14 @@ const TOOLS: ToolSpec[] = [
   {
     name: "edit",
     description:
-      "Replace node id with expr, written without ids. op insert puts expr at index among the arguments of call id; op delete removes call argument id. op rename gives the binding at id, a let or a use of it, the name in expr, with every use that refers to it. The checker runs first; a rejected edit changes nothing. Set done when this completes the goal.",
+      "Replace node id with expr, written without ids. op insert puts expr at index among the arguments of call id; op delete removes call argument id. op rename gives the binding at id, a let or a use of it, the new name in name, with every use that refers to it. op param adds a parameter called name to the let-bound fn at id, at index or last, and passes expr at every call of it. The checker runs first; a rejected edit changes nothing. Set done when this completes the goal.",
     parameters: {
       type: "object",
       properties: {
         id: { type: "string" },
         expr: { type: "string" },
-        op: { type: "string", enum: ["replace", "insert", "delete", "rename"] },
+        op: { type: "string", enum: ["replace", "insert", "delete", "rename", "param"] },
+        name: { type: "string" },
         index: { type: "integer" },
         done: { type: "boolean" },
       },
@@ -335,8 +342,10 @@ function callTool(session: Session, call: Call): ToolResult {
       const input: Change = { id: str("id") ?? "" };
       const op = str("op");
       const expr = str("expr");
+      const name = str("name");
       if (op !== undefined) input.op = op;
       if (expr !== undefined) input.expr = expr;
+      if (name !== undefined) input.name = name;
       if (typeof args.index === "number") input.index = Math.floor(args.index);
       const reply = change(session, input);
       const ok = reply.startsWith("ok");
@@ -762,6 +771,20 @@ for (const length of RENAME_SIZES) {
   editSections.push(`### Renombrar en ${length} pasos
 
 \`rate\` aparece en ${uses} usos y \`rate_cap\`, que empieza igual, en ${Math.floor(length / 4)}. Objetivo: llamar \`scale\` a \`rate\` sin tocar \`rate_cap\`. Correcto pide el mismo valor y el mismo archivo que un renombrado bien hecho, sin contar espacios. Nodast con tools tiene \`op rename\`, que sigue los ámbitos; texto con tools tiene \`all\` en \`replace\`; las variantes de ids solo tienen \`replace\`, \`insert\` y \`delete\`.
+
+${summary(columns(groups, EDIT_SIDES), true)}`);
+}
+
+const PARAM_SIZES = (process.env.BENCH_PARAM || "20,200")
+  .split(",")
+  .map((item) => Number(item.trim()))
+  .filter((item) => item > 0);
+for (const length of PARAM_SIZES) {
+  process.stderr.write(`param bench: ${length} calls × ${RUNS} runs\n`);
+  const groups = await editBench(steps(length), [paramTask(length)]);
+  editSections.push(`### Añadir un parámetro con ${length} llamadas
+
+\`step\` se llama una vez en cada uno de los ${length} pasos. Objetivo: un parámetro nuevo \`scale\` que multiplica su resultado, y 2 en cada llamada. Correcto pide el valor final y que \`step(1, 5)\` dé 20, así que multiplicar por 2 dentro de \`step\` sin parámetro no basta. Nodast con tools tiene \`op param\`, que cambia la función y todas sus llamadas a la vez; texto con tools tiene que tocar cada llamada, porque cada una lleva su argumento.
 
 ${summary(columns(groups, EDIT_SIDES), true)}`);
 }

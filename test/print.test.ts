@@ -23,6 +23,20 @@ function assertTypeScript(text: string) {
   assert.deepEqual(errors, []);
 }
 
+test("gives a let that reuses or reads its own name a fresh scope", () => {
+  const cases: Array<[string, string]> = [
+    ["(let k 2 (let a (add k 1) (let k 3 (add a k))))", "const k = 2;\nconst a = k + 1;\n(() => {\n  const k = 3;\n  return a + k;\n})();\n"],
+    ["(let k 2 (let k (add k 1) k))", "const k = 2;\n((k) => k)(k + 1);\n"],
+    ["(let k 2 (add 1 (let k (add k 1) k)))", "const k = 2;\n1 + ((k) => k)(k + 1);\n"],
+    ["(fn (x) (let x (add x 1) x))", "((x) => {\n  return ((x) => x)(x + 1);\n});\n"],
+  ];
+  for (const [text, want] of cases) {
+    const printed = source(text);
+    assert.equal(printed, want);
+    assertTypeScript(printed);
+  }
+});
+
 test("prints the readme let as const and a final expression", () => {
   assert.equal(source("(let x (add 1 2) x)"), "const x = 1 + 2;\nx;\n");
 });

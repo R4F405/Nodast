@@ -87,7 +87,7 @@ export function edit(session: Session, text: string): string {
   return views.length === 0 ? `ok, type ${applied.type}` : `ok, type ${applied.type}, now ${views.join(" ")}`;
 }
 
-export type Change = { op?: string; id: string; expr?: string; index?: number };
+export type Change = { op?: string; id: string; expr?: string; index?: number; name?: string };
 
 // One edit as separate fields, for function calling: the model fills id and expr instead of writing an
 // (edits ...) list, so the prompt needs no edit grammar. op defaults to replace.
@@ -95,15 +95,104 @@ export function change(session: Session, input: Change): string {
   const op = input.op === undefined || input.op.trim() === "" ? "replace" : input.op.trim();
   const id = input.id.trim();
   const expr = (input.expr ?? "").trim();
+  const name = (input.name ?? "").trim();
   if (op === "delete") return edit(session, `(edits (delete ${id}))`);
+  // rename takes the new name in name; older callers put it in expr.
+  if (op === "rename") return rename(session, id, name === "" ? expr : name);
   if (expr === "") return `rejected: ${op} needs expr`;
-  if (op === "rename") return rename(session, id, expr);
+  if (op === "param") {
+    if (name === "") return "rejected: param needs name";
+    return addParam(session, id, name, expr, input.index);
+  }
   if (op === "replace") return edit(session, `(edits (replace ${id} ${expr}))`);
   if (op === "insert") {
     if (input.index === undefined) return "rejected: insert needs index";
     return edit(session, `(edits (insert ${id} ${input.index} ${expr}))`);
   }
-  return `rejected: unknown op ${op}; ops are replace insert delete rename`;
+  return `rejected: unknown op ${op}; ops are replace insert delete rename param`;
+}
+
+// Adds a parameter to a let-bound function and passes expr at every call of it, in one step, so no call
+// is left behind. id is the let, its fn, or any use of the function. index defaults to the end.
+export function addParam(session: Session, id: string, name: string, expr: string, index?: number): string {
+  if (!NAME.test(name) || RESERVED.has(name)) return `rejected: bad name ${name}`;
+  let binder: Extract<Expr, { kind: "let" }> | undefined;
+  scoped(session.tree, new Map(), (node, scope) => {
+    if (node.kind === "let" && (node.id === id || node.value.id === id)) binder = node;
+    if (node.kind === "var" && node.id === id) {
+      const at = scope.get(node.name);
+      if (at !== undefined) {
+        const found = locate(session.tree, at);
+        if (found?.node.kind === "let") binder = found.node;
+      }
+    }
+  });
+  if (binder === undefined) {
+    return locate(session.tree, id) === undefined ? `unknown-id ${id}` : `rejected: ${id} is not a let-bound function or a use of one`;
+  }
+  const target = binder;
+  const fn = target.value;
+  if (fn.kind !== "fn") return `rejected: ${target.name} is not bound to a fn`;
+  const at = index ?? fn.params.length;
+  if (!Number.isInteger(at) || at < 0 || at > fn.params.length) return `rejected: index ${at} is outside 0..${fn.params.length}`;
+  let inside = false;
+  walk(fn, null, (node) => {
+    if (names(node).includes(name)) inside = true;
+  });
+  if (inside) return `rejected: name ${name} is already used in ${target.name}`;
+  const calls: string[] = [];
+  const loose: string[] = [];
+  scoped(target.body, new Map([[target.name, target.id]]), (node, scope) => {
+    if (node.kind === "call" && node.callee.kind === "var" && scope.get(node.callee.name) === target.id) calls.push(node.id);
+    if (node.kind === "var" && scope.get(node.name) === target.id) loose.push(node.id);
+  });
+  const callees = new Set(calls.length === 0 ? [] : collectCallees(target.body, calls));
+  const values = loose.filter((use) => !callees.has(use));
+  if (values.length > 0) return `rejected: ${target.name} is also used as a value at ${values.slice(0, 3).join(" ")}; change those uses first`;
+  const params = [...fn.params.slice(0, at), name, ...fn.params.slice(at)];
+  const widened = replaceNode(session.tree, fn.id, { ...fn, params });
+  if (calls.length === 0) {
+    const checked = check(widened);
+    if (!checked.ok) return `rejected: ${errorLine(checked.error, widened)}`;
+    session.tree = widened;
+    remember(session);
+    return `ok, type ${checked.type}, ${target.name} takes (${params.join(" ")}), no calls to update`;
+  }
+  const inserts = calls.map((call) => `(insert ${call} ${at} ${expr})`).join(" ");
+  const applied = applyEditText(widened, `(edits ${inserts})`, session.used);
+  if (!applied.ok) return `rejected: ${errorLine(applied.error, applied.tree)}`;
+  session.tree = applied.tree;
+  remember(session);
+  return `ok, type ${applied.type}, ${target.name} takes (${params.join(" ")}), updated ${calls.length} calls`;
+}
+
+function collectCallees(tree: Expr, calls: readonly string[]): string[] {
+  const wanted = new Set(calls);
+  const out: string[] = [];
+  walk(tree, null, (node) => {
+    if (node.kind === "call" && wanted.has(node.id)) out.push(node.callee.id);
+  });
+  return out;
+}
+
+function replaceNode(node: Expr, id: string, next: Expr): Expr {
+  if (node.id === id) return next;
+  switch (node.kind) {
+    case "num":
+    case "bool":
+    case "var":
+      return node;
+    case "let":
+      return { ...node, value: replaceNode(node.value, id, next), body: replaceNode(node.body, id, next) };
+    case "fn":
+      return { ...node, body: replaceNode(node.body, id, next) };
+    case "call":
+      return { ...node, callee: replaceNode(node.callee, id, next), args: node.args.map((arg) => replaceNode(arg, id, next)) };
+    case "if":
+      return { ...node, cond: replaceNode(node.cond, id, next), then: replaceNode(node.then, id, next), else: replaceNode(node.else, id, next) };
+    default:
+      return { ...node, left: replaceNode(node.left, id, next), right: replaceNode(node.right, id, next) };
+  }
 }
 
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;

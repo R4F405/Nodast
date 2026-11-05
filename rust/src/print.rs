@@ -14,7 +14,7 @@ enum Assoc {
 }
 
 pub fn print(expr: &Expr) -> String {
-    let (bindings, result) = flatten(expr);
+    let (bindings, result) = flatten(expr, &[]);
     let mut lines: Vec<String> = bindings
         .iter()
         .map(|(name, value)| format!("const {name} = {};", print_expr(value, "")))
@@ -32,14 +32,40 @@ fn as_statement(expr: &Expr) -> String {
     }
 }
 
-fn flatten(expr: &Expr) -> (Vec<(&str, &Expr)>, &Expr) {
-    let mut bindings = Vec::new();
+// Lets become const lines in one scope, which cannot declare a name twice or read a name in its own const.
+// So the chain stops at a let that reuses a name already declared there, or whose value uses its own name;
+// that let prints as an applied function instead, which gives it a fresh scope.
+fn flatten<'a>(expr: &'a Expr, taken: &[&str]) -> (Vec<(&'a str, &'a Expr)>, &'a Expr) {
+    let mut bindings: Vec<(&str, &Expr)> = Vec::new();
+    let mut declared: Vec<&str> = taken.to_vec();
     let mut current = expr;
     while let Expr::Let { name, value, body, .. } = current {
+        if shadows(name, value, &declared) {
+            break;
+        }
         bindings.push((name.as_str(), value.as_ref()));
+        declared.push(name.as_str());
         current = body;
     }
     (bindings, current)
+}
+
+fn shadows(name: &str, value: &Expr, declared: &[&str]) -> bool {
+    declared.contains(&name) || mentions(value, name)
+}
+
+fn mentions(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Num { .. } | Expr::Bool { .. } => false,
+        Expr::Var { name: used, .. } => used == name,
+        Expr::Bin { left, right, .. } => mentions(left, name) || mentions(right, name),
+        Expr::Let { value, body, .. } => mentions(value, name) || mentions(body, name),
+        Expr::Fn { body, .. } => mentions(body, name),
+        Expr::Call { callee, args, .. } => mentions(callee, name) || args.iter().any(|arg| mentions(arg, name)),
+        Expr::If { cond, then_branch, else_branch, .. } => {
+            mentions(cond, name) || mentions(then_branch, name) || mentions(else_branch, name)
+        }
+    }
 }
 
 fn print_expr(expr: &Expr, indent: &str) -> String {
@@ -71,17 +97,25 @@ fn print_expr(expr: &Expr, indent: &str) -> String {
             let args = args.iter().map(|arg| print_expr(arg, indent)).collect::<Vec<_>>().join(", ");
             format!("{callee}({args})")
         }
-        Expr::Fn { .. } => print_fn(expr, indent),
-        Expr::Let { .. } => print_iife(expr, indent),
+        Expr::Fn { params, body, .. } => print_arrow(params, body, indent),
+        Expr::Let { name, value, body, .. } => {
+            if shadows(name, value, &[]) {
+                // (let k v body) as ((k) => body)(v): v is read in the outer scope and body sees the new k.
+                let arrow = print_arrow(std::slice::from_ref(name), body, indent);
+                format!("({arrow})({})", print_expr(value, indent))
+            } else {
+                print_iife(expr, indent)
+            }
+        }
     }
 }
 
-fn print_fn(expr: &Expr, indent: &str) -> String {
-    let Expr::Fn { params, body, .. } = expr else { unreachable!() };
+fn print_arrow(params: &[String], body: &Expr, indent: &str) -> String {
     let head = format!("({}) =>", params.join(", "));
-    if matches!(body.as_ref(), Expr::Let { .. }) {
+    if matches!(body, Expr::Let { .. }) {
         let inner = format!("{indent}  ");
-        format!("{head} {{\n{}\n{indent}}}", print_body(body, &inner))
+        let taken: Vec<&str> = params.iter().map(String::as_str).collect();
+        format!("{head} {{\n{}\n{indent}}}", print_body(body, &inner, &taken))
     } else {
         format!("{head} {}", print_expr(body, indent))
     }
@@ -89,11 +123,11 @@ fn print_fn(expr: &Expr, indent: &str) -> String {
 
 fn print_iife(expr: &Expr, indent: &str) -> String {
     let inner = format!("{indent}  ");
-    format!("(() => {{\n{}\n{indent}}})()", print_body(expr, &inner))
+    format!("(() => {{\n{}\n{indent}}})()", print_body(expr, &inner, &[]))
 }
 
-fn print_body(expr: &Expr, indent: &str) -> String {
-    let (bindings, result) = flatten(expr);
+fn print_body(expr: &Expr, indent: &str, taken: &[&str]) -> String {
+    let (bindings, result) = flatten(expr, taken);
     let mut lines: Vec<String> = bindings
         .iter()
         .map(|(name, value)| format!("{indent}const {name} = {};", print_expr(value, indent)))
