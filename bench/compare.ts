@@ -67,7 +67,7 @@ loadEnv(".env");
 
 // minimax speaks chat completions; openai speaks the Responses API, which its current models need for tool calls.
 type Provider = "minimax" | "openai";
-const PROVIDER: Provider = process.env.BENCH_PROVIDER === "openai" ? "openai" : "minimax";
+const PROVIDER: Provider = process.env.BENCH_PROVIDER === "minimax" ? "minimax" : "openai";
 const PROVIDERS = {
   minimax: { label: "MiniMax", key: "MINIMAX_API_KEY", model: process.env.MINIMAX_MODEL || "MiniMax-M3.1-Flash", base: process.env.MINIMAX_BASE_URL || "https://api.minimax.io/v1" },
   openai: { label: "OpenAI", key: "OPENAI_API_KEY", model: process.env.OPENAI_MODEL || "gpt-6.1-sol", base: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1" },
@@ -80,7 +80,7 @@ const CONCURRENCY = Number(process.env.BENCH_CONCURRENCY || 2);
 // OpenAI reasoning models reject sampling parameters, so temperature only goes to MiniMax.
 const TEMPERATURE = Number(process.env.BENCH_TEMPERATURE || 0.01);
 const LOG = process.env.BENCH_LOG;
-const OUT = process.env.BENCH_OUT || (PROVIDER === "minimax" ? "BENCH.md" : `bench/${PROVIDER}.md`);
+const OUT = process.env.BENCH_OUT || (PROVIDER === "openai" ? "BENCH.md" : `bench/${PROVIDER}.md`);
 
 function log(entry: Record<string, unknown>): void {
   if (LOG !== undefined && LOG !== "") appendFileSync(LOG, `${JSON.stringify(entry)}\n`);
@@ -806,7 +806,7 @@ const WRITE_SIDES = ["Nodast", "Texto plano"] as const;
 
 const markdown = `# Medición
 
-Una pasada el ${new Date().toISOString().slice(0, 10)} con ${MODEL} (${SETUP.label}), ${PROVIDER === "minimax" ? `temperatura ${TEMPERATURE}` : "sin temperatura, que el modelo no acepta"}, razonamiento \`low\`, ${RUNS} repeticiones por objetivo y tope de ${ATTEMPTS} intentos. \`pnpm bench\` la repite con MiniMax por chat completions y escribe en \`BENCH.md\`; con \`BENCH_PROVIDER=openai\` va a OpenAI por la API Responses y escribe en \`bench/openai.md\`. \`BENCH_RUNS\`, \`BENCH_SIZES\`, \`BENCH_CONCURRENCY\`, \`BENCH_TEMPERATURE\` y \`BENCH_OUT\` la ajustan. La velocidad interna del motor está aparte, en [bench/engine.md](${OUT.includes("/") ? "engine.md" : "bench/engine.md"}).
+Una pasada el ${new Date().toISOString().slice(0, 10)} con ${MODEL} (${SETUP.label}), ${PROVIDER === "minimax" ? `temperatura ${TEMPERATURE}` : "sin temperatura, que el modelo no acepta"}, razonamiento \`low\`, ${RUNS} repeticiones por objetivo y tope de ${ATTEMPTS} intentos. \`pnpm bench\` la repite con OpenAI por la API Responses y escribe en \`BENCH.md\`; con \`BENCH_PROVIDER=minimax\` va a MiniMax por chat completions y escribe en \`bench/minimax.md\`. \`BENCH_RUNS\`, \`BENCH_SIZES\`, \`BENCH_CONCURRENCY\`, \`BENCH_TEMPERATURE\` y \`BENCH_OUT\` la ajustan. La velocidad interna del motor está aparte, en [bench/engine.md](${OUT.includes("/") ? "engine.md" : "bench/engine.md"}).
 
 Válido: Nodast parsea y pasa \`check\`; el texto plano sale de \`tsc\` sin error y corre. Correcto: además, el valor de la última expresión coincide con el oráculo del objetivo, o la función que devuelve da lo esperado con varias entradas. Los dos lados reintentan solo por errores estructurales; el oráculo no se le enseña al modelo.
 

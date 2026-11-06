@@ -5,7 +5,7 @@
 
 <p align="center">
   <a href="README.es.md">Español</a> ·
-  <a href="bench/openai.md">Benchmark</a> ·
+  <a href="BENCH.md">Benchmark</a> ·
   <a href="ROADMAP.md">Roadmap</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="LICENSE">MIT</a>
@@ -42,13 +42,13 @@ What this says:
 - **A single local edit is a tie.** Editing in pieces is what saves tokens, and a text agent with good tools does that too. Nodast's fixed prompt is slightly larger.
 - **Against rewriting the whole file, Nodast wins by far:** 12 to 30 times cheaper and up to 7 times faster.
 
-The full tables, with the other variants and every metric, are in [bench/openai.md](bench/openai.md). `pnpm bench` reproduces them. The parameter task was measured in a separate pass with the same setup and is not in that report yet.
+The full tables, with the other variants and every metric, are in [BENCH.md](BENCH.md). `pnpm bench` reproduces them. The parameter task was measured in a separate pass with the same setup and is not in that report yet.
 
 ## Limits, honestly
 
 - **The language is small on purpose:** numbers, bools, `let`, pure functions, calls, `if`. No strings, lists or records yet, so no real-world programs yet.
 - **The benchmark is synthetic:** long chains of `let` and repeated calls, built to isolate one kind of edit at a time.
-- **One strong model measured so far.** MiniMax was used during development; results on other vendors are an [open issue](https://github.com/R4F405/Nodast/issues/11).
+- **One strong model measured so far.** MiniMax, used during development, is in [bench/minimax.md](bench/minimax.md); other vendors are an [open issue](https://github.com/R4F405/Nodast/issues/11).
 - **The text agent varies between runs.** In other passes the rename gap reached 2.8 times on cost and latency; the table shows the pass in the report.
 
 ## How it works
