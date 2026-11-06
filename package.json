@@ -14,7 +14,9 @@
     "typecheck": "tsc --noEmit",
     "ask": "node --experimental-strip-types --env-file=.env src/ask.ts",
     "bench": "node --experimental-strip-types bench/compare.ts",
-    "bench:engine": "node --experimental-strip-types bench/run.ts"
+    "bench:engine": "node --experimental-strip-types bench/run.ts",
+    "demo": "node --experimental-strip-types src/demo.ts",
+    "demo:svg": "node --experimental-strip-types scripts/demo-svg.ts"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",

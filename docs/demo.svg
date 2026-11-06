@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="654" height="648" viewBox="0 0 654 648" role="img" aria-label="Nodast tool session: rename, add a parameter, a refused edit">
+  <style>
+    text { font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; opacity: 0; animation: show 0.25s ease-out forwards; }
+    @keyframes show { to { opacity: 1; } }
+  </style>
+  <rect width="100%" height="100%" rx="8" fill="#0d1117"/>
+  <circle cx="20" cy="20" r="6" fill="#ff5f56"/>
+  <circle cx="40" cy="20" r="6" fill="#ffbd2e"/>
+  <circle cx="60" cy="20" r="6" fill="#27c93f"/>
+  <text x="20" y="63" fill="#8b949e" style="animation-delay:0.00s"># A program, as TypeScript</text>
+  <text x="20" y="83" fill="#e6edf3" style="animation-delay:0.32s">const rate = 3;</text>
+  <text x="20" y="103" fill="#e6edf3" style="animation-delay:0.64s">const rate_cap = 7;</text>
+  <text x="20" y="123" fill="#e6edf3" style="animation-delay:0.96s">const step = (x) =&gt; x + rate;</text>
+  <text x="20" y="143" fill="#e6edf3" style="animation-delay:1.28s">const a = step(1) + rate;</text>
+  <text x="20" y="163" fill="#e6edf3" style="animation-delay:1.60s">const b = step(rate_cap);</text>
+  <text x="20" y="183" fill="#e6edf3" style="animation-delay:1.92s">a * b;</text>
+  <text x="20" y="203" fill="#e6edf3" style="animation-delay:2.24s"> </text>
+  <text x="20" y="223" fill="#8b949e" style="animation-delay:2.56s"># Goal: rename rate to scale. rate_cap must not change.</text>
+  <text x="20" y="243" fill="#79c0ff" style="animation-delay:2.88s">&gt; edit {op: "rename", id: "n1", name: "scale"}</text>
+  <text x="20" y="263" fill="#7ee787" style="animation-delay:3.20s">  ok, type number, renamed rate to scale and 2 uses</text>
+  <text x="20" y="283" fill="#e6edf3" style="animation-delay:3.52s"> </text>
+  <text x="20" y="303" fill="#8b949e" style="animation-delay:3.84s"># Goal: give step a parameter bonus, pass 10 at every call.</text>
+  <text x="20" y="323" fill="#79c0ff" style="animation-delay:4.16s">&gt; edit {op: "param", id: "n5", name: "bonus", expr: "10"}</text>
+  <text x="20" y="343" fill="#7ee787" style="animation-delay:4.48s">  ok, type number, step takes (x bonus), updated 2 calls</text>
+  <text x="20" y="363" fill="#79c0ff" style="animation-delay:4.80s">&gt; edit {id: "n7", expr: "(add (add x scale) bonus)"}</text>
+  <text x="20" y="383" fill="#7ee787" style="animation-delay:5.12s">  ok, type number, now n6:(fn (x bonus) n25:(add n26:... n29:bonus))</text>
+  <text x="20" y="403" fill="#e6edf3" style="animation-delay:5.44s"> </text>
+  <text x="20" y="423" fill="#8b949e" style="animation-delay:5.76s"># A mistake is refused before it reaches the file</text>
+  <text x="20" y="443" fill="#79c0ff" style="animation-delay:6.08s">&gt; edit {id: "n25", expr: "(add x true)"}</text>
+  <text x="20" y="463" fill="#ff7b72" style="animation-delay:6.40s">  rejected: type-mismatch n30 expected number actual bool in (add x true)</text>
+  <text x="20" y="483" fill="#e6edf3" style="animation-delay:6.72s"> </text>
+  <text x="20" y="503" fill="#8b949e" style="animation-delay:7.04s"># The same program, printed again</text>
+  <text x="20" y="523" fill="#e6edf3" style="animation-delay:7.36s">const scale = 3;</text>
+  <text x="20" y="543" fill="#e6edf3" style="animation-delay:7.68s">const rate_cap = 7;</text>
+  <text x="20" y="563" fill="#e6edf3" style="animation-delay:8.00s">const step = (x, bonus) =&gt; x + scale + bonus;</text>
+  <text x="20" y="583" fill="#e6edf3" style="animation-delay:8.32s">const a = step(1, 10) + scale;</text>
+  <text x="20" y="603" fill="#e6edf3" style="animation-delay:8.64s">const b = step(rate_cap, 10);</text>
+  <text x="20" y="623" fill="#e6edf3" style="animation-delay:8.96s">a * b;</text>
+</svg>
