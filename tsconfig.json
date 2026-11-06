@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "rootDir": "."
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "bench/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "bench/**/*.ts", "scripts/**/*.ts"]
 }

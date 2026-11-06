@@ -1,122 +1,109 @@
 <p align="center">
   <strong>Nodast</strong><br>
-  El modelo propone nodos. El printer escribe el código.
+  The model proposes nodes. A printer writes the code.
 </p>
 
 <p align="center">
-  Árbol propio, validado antes de existir como texto.<br>
-  Menos archivo reenviado, ediciones por nodo, una sola salida determinista.
-</p>
-
-<p align="center">
+  <a href="README.es.md">Español</a> ·
+  <a href="bench/openai.md">Benchmark</a> ·
   <a href="ROADMAP.md">Roadmap</a> ·
-  <a href="CONTRIBUTING.md">Contribuir</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="LICENSE">MIT</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/R4F405/Nodast/actions/workflows/ci.yml"><img src="https://github.com/R4F405/Nodast/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 ---
 
-**Estado.** PoC cerrado: parser, printer, checker, operaciones y contrato con el modelo.
+Nodast (**Node** + **AST**) lets an LLM write and edit a program as a tree instead of a text file. The model sends short S-expressions or edits on node ids. A type checker accepts or rejects the tree before anything is written. A deterministic printer is the only thing that produces source code, TypeScript for now.
 
-Nodast (**Node** + **AST**) es una herramienta open source para generar y modificar código como un árbol, no como un archivo de texto. El modelo devuelve nodos o una operación sobre un nodo. Un checker acepta o rechaza el árbol. Un printer determinista es el único que produce el fuente.
+<p align="center">
+  <img src="docs/demo.svg" alt="A Nodast tool session: rename a variable, add a parameter to every call, and a refused edit" width="654">
+</p>
 
-## Qué problema trata
+That session runs offline with `pnpm demo`: no model, no key.
 
-Pedirle a un modelo el archivo entero falla de formas concretas: la edición llega a medias, un nombre no existe, el tipo no cuadra, y el contexto se llena con el mismo código una y otra vez.
+## Results
 
-Nodast ataca esas tres:
+Measured with `gpt-6.1-sol` (OpenAI), 5 runs per task, all variants correct in every run. Nodast with tools is compared with a **fair text agent**: the same TypeScript file, with `grep`, `read` and `replace` (including replace-all), the way coding agents edit today. Cost uses the list price of 2 USD per million input tokens and 10 USD per million output tokens.
 
-| Problema | Qué hace Nodast |
-| --- | --- |
-| Archivo truncado o a medio editar | La mutación es `insert`, `replace` o `delete` sobre el id de un nodo |
-| Programa inválido que ya se escribió a disco | El checker corre antes del printer |
-| Contexto enorme | Viaja un parche y una forma corta del árbol, no el fuente repetido |
+| Task | Nodast, tools | Text agent, tools | Model rewrites the file |
+| --- | ---: | ---: | ---: |
+| Rename `rate` to `scale` in 400 steps, next to `rate_cap` | **4.4 s**, 907 in / 55 out | 6.7 s, 1187 in / 80 out | 29 s, 4975 in / 4927 out |
+| Add a parameter to a function called 200 times | **9.1 s**, 2182 in / 136 out | 13.7 s, 12045 in / 174 out | 35 s, 7432 in / 5668 out |
+| Change one constant in a 500-line file | 4.6 s, 772 in / 61 out | 4.5 s, **581 in** / 67 out | 33 s, 5559 in / 5513 out |
+| Write a small program from scratch | 1.9 s, 23 out, 60/60 first try | — | 2.1 s, 25 out, 60/60 first try |
 
-El corchete desbalanceado es el fallo barato. El checker existe para ámbito, tipos y forma. La sintaxis final no la elige el modelo.
+What this says:
 
-## Cómo circula un programa
+- **Changes that touch many places are where Nodast wins.** `rename` follows scopes, so it never touches `rate_cap`; the text agent tends to replace `rate` everywhere, break `rate_cap` and fix it back. `param` adds the parameter and updates every call in one edit; the text agent has to reach each call, since each has its own argument. Adding a parameter at 200 call sites costs about 4.5 times less with Nodast.
+- **A single local edit is a tie.** Editing in pieces is what saves tokens, and a text agent with good tools does that too. Nodast's fixed prompt is slightly larger.
+- **Against rewriting the whole file, Nodast wins by far:** 12 to 30 times cheaper and up to 7 times faster.
+
+The full tables, with the other variants and every metric, are in [bench/openai.md](bench/openai.md). `pnpm bench` reproduces them. The parameter task was measured in a separate pass with the same setup and is not in that report yet.
+
+## Limits, honestly
+
+- **The language is small on purpose:** numbers, bools, `let`, pure functions, calls, `if`. No strings, lists or records yet, so no real-world programs yet.
+- **The benchmark is synthetic:** long chains of `let` and repeated calls, built to isolate one kind of edit at a time.
+- **One strong model measured so far.** MiniMax was used during development; results on other vendors are an [open issue](https://github.com/R4F405/Nodast/issues/11).
+- **The text agent varies between runs.** In other passes the rename gap reached 2.8 times on cost and latency; the table shows the pass in the report.
+
+## How it works
 
 ```mermaid
 flowchart LR
-  pedido[Pedido] --> modelo[Modelo]
-  modelo --> texto[Texto compacto]
-  texto --> parser[Parser]
+  goal[Goal] --> model[Model]
+  model --> text[Compact text or edit]
+  text --> parser[Parser]
   parser --> checker[Checker]
-  checker -->|acepta| memoria[Structs]
-  memoria --> printer[Printer]
+  checker -->|accepts| tree[Tree]
+  tree --> printer[Printer]
   printer --> ts[TypeScript]
-  checker -->|rechaza| modelo
+  checker -->|rejects, with a structured error| model
 ```
 
-El mismo programa vive en tres sitios, y cada sitio tiene su formato:
-
-| Capa | Formato | Para qué |
-| --- | --- | --- |
-| Hacia el modelo | Texto corto, tipo `(let x (add 1 2) x)` | Pocos tokens y una gramática regular |
-| En memoria | Structs con id y tag | Recorrer, validar y aplicar operaciones |
-| En disco, más adelante | Binario plano | Cargar un árbol grande sin volver a parsear |
-
-`let x = 1 + 2 in x` se escribe así hacia el modelo:
+The model writes compact text:
 
 ```text
 (let x (add 1 2) x)
 ```
 
-El printer, con el árbol ya aceptado, emite TypeScript:
+and the printer emits:
 
 ```ts
 const x = 1 + 2;
 x;
 ```
 
-El tipo que describe los nodos vive en el código de Nodast. No viaja en el prompt ni se guarda como formato del programa.
+When editing, every node carries an id, like `n4:(add n5:v0 n6:7)`, and the model works through three tools:
 
-## Qué entra en el primer PoC
+| Tool | What it does |
+| --- | --- |
+| `find` | Finds nodes by exact text, kind or name. Returns ids and a short view. |
+| `show` | Shows a node and its children to a depth. |
+| `edit` | `replace`, `insert` or `delete` a node, `rename` a binding with all its uses, or add a `param` to a function and every call. The checker runs first; a rejected edit changes nothing. |
 
-Un lenguaje mínimo y cerrado:
+Types are inferred with Hindley-Milner, so the model never writes annotations, and a function bound with `let` is generic. The same tree, parser, checker, printer and binary format also live in Rust, in [`rust/`](rust/); TypeScript is the behavior reference.
 
-- literales, `let`, funciones puras, llamadas, `if`
-- aritmética y comparación
-- tipos simples: `number`, `bool` y funciones, inferidos sin anotar; una función ligada con `let` es genérica, como `(let id (fn (x) x) ...)`
-- operaciones `insert`, `replace` y `delete`
-- un printer, a TypeScript
-- un contrato de entrada y salida para el modelo, con un fixture para probar el círculo sin una API de pago
-- un reintento cuando el checker devuelve un error estructurado
+## Quick start
 
-El proyecto del PoC se escribe en TypeScript. La IR no es el AST de TypeScript ni el de Rust: es el árbol de Nodast. Un motor en Rust puede leer ese mismo árbol después.
-
-## Qué hay hoy
-
-Parser, printer, checker, operaciones, el bucle con el modelo, el buffer binario y la gramática local del texto compacto. El mismo árbol, checker, printer y binario también están en Rust, en `rust/`. La medición de ese motor está en [BENCH.md](BENCH.md). Los tests usan un fixture y no llaman a la red. El cliente real es MiniMax, con la clave fuera del repositorio. MiniMax no puede aplicar esa gramática al muestrear. El detalle está en el [roadmap](ROADMAP.md).
-
-## Decisiones cerradas
-
-Estas no se reabren en un pull request sin una issue que las discuta antes:
-
-1. El modelo no escribe el fuente final.
-2. Hacia el modelo va texto compacto. JSON, hexadecimal y un AST ajeno quedan fuera de ese contrato.
-3. El binario es el formato interno de después de validar, no lo que el modelo emite.
-4. Una operación cambia nodos por id. No se reescribe el archivo.
-5. Nada llega al printer sin pasar el checker.
-6. Un solo lenguaje de salida, TypeScript, hasta que pedido → árbol válido → código cierre.
-7. El PoC no persigue varios lenguajes fuente ni un ejecutor de bytecode.
-
-## Empezar
-
-Hace falta Node 22.18 o superior, pnpm 11.5 y Rust. La versión de pnpm queda fijada en `packageManager`.
+Node 22.18+, pnpm 11.5 and, for `rust/`, stable Rust.
 
 ```sh
 pnpm install
-pnpm test
-pnpm typecheck
-cargo test --manifest-path rust/Cargo.toml
-pnpm ask -- "bind the sum of 1 and 2"
+pnpm demo     # an offline tool session
+pnpm test     # no network, no key
 ```
 
-`pnpm ask` lee `.env` y llama a MiniMax. `pnpm test` no.
+`cargo test --manifest-path rust/Cargo.toml` runs the Rust engine. `pnpm ask -- "bind the sum of 1 and 2"` and `pnpm bench` call a real model and read a key from `.env`; see `.env.example`.
 
-`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. `cargo test` recorre el motor en Rust. `pnpm bench` mide validez, payload, edición y reintentos, y llama a MiniMax. `pnpm bench:engine` mide solo el motor, en local. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
+## Contributing
 
-## Licencia
+Start with an issue labeled [good first issue](https://github.com/R4F405/Nodast/labels/good%20first%20issue), or a [proposal](https://github.com/R4F405/Nodast/labels/proposal) to grow the language or add structural edits. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Issues and pull requests can be in English or Spanish.
+
+## License
 
 [MIT](LICENSE) © 2026 Rafa San Pablo González
