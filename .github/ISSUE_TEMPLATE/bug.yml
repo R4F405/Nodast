@@ -1,38 +1,49 @@
 name: Bug
-description: Algo no hace lo que dice el README o el roadmap
+description: Something does not do what the README or the roadmap says / Algo no hace lo que dice el README o el roadmap
 labels: [bug]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. English or Spanish are both fine. / Gracias por el aviso. Vale en inglés o en español.
+        For a security problem, use a [private report](https://github.com/R4F405/Nodast/security/advisories/new) instead. / Si es de seguridad, avisa en privado.
   - type: textarea
     id: input
     attributes:
-      label: Entrada
-      description: El texto compacto, el (edits ...) o la llamada que lo provoca.
+      label: Input / Entrada
+      description: The compact text, the (edits ...) list or the call that triggers it. / El texto compacto, el (edits ...) o la llamada que lo provoca.
       render: text
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
-      label: Qué esperabas
+      label: Expected / Qué esperabas
     validations:
       required: true
   - type: textarea
     id: actual
     attributes:
-      label: Qué pasa
-      description: La salida o el error tal cual.
+      label: What happens / Qué pasa
+      description: The output or the error, as is. / La salida o el error tal cual.
       render: text
     validations:
       required: true
   - type: dropdown
     id: side
     attributes:
-      label: Dónde
+      label: Where / Dónde
       options:
         - TypeScript (src/)
         - Rust (rust/)
-        - Los dos
+        - Both / Los dos
         - Bench
-        - No lo sé
+        - Not sure / No lo sé
     validations:
       required: true
+  - type: input
+    id: version
+    attributes:
+      label: Node version and commit / Versión de Node y commit
+      description: Output of `node --version` and `git rev-parse --short HEAD`.
+      placeholder: v22.18.0, 7f3c463

@@ -1,60 +1,115 @@
-# Contribuir
+# Contributing to Nodast
 
-El PoC está cerrado: parser, checker, printer a TypeScript, operaciones, contrato con el modelo, binario, motor en Rust, tools y bench. Un cambio entra si acerca el [roadmap](ROADMAP.md) y respeta las decisiones cerradas del [README](README.md). Lo que más ayuda ahora está en "Después del PoC" del roadmap y en las issues.
+Thanks for your interest. Nodast is small, so one pull request can move it a lot. Issues, pull requests and reviews can be in **English or Spanish**. [Leer en español](CONTRIBUTING.es.md).
 
-## Antes de escribir código
+The proof of concept is done: parser, checker, TypeScript printer, id edits, model contract, binary format, Rust engine, tools and benchmark. A change gets in when it moves the [roadmap](ROADMAP.md) forward and respects the [design decisions](README.md#how-it-works) in the README.
 
-Abre una issue si el cambio hace alguna de estas cosas:
+## Your first contribution
 
-- añade un tipo de nodo
-- cambia el texto compacto, las operaciones o el error del checker
-- suma un lenguaje de salida
-- mueve trabajo de una fase futura a la fase actual
+1. **Pick something small.** Take an issue labeled [good first issue](https://github.com/R4F405/Nodast/labels/good%20first%20issue), or one of the [ideas below](#ideas-for-a-first-pull-request). Comment on the issue to say you are on it, so nobody does it twice. For an idea from the list with no issue yet, open one first if it is marked *needs an issue*.
+2. **Set up** (about a minute):
 
-Un arreglo de documentación, un test del comportamiento ya descrito o un bug claro pueden ir directo en pull request.
+   ```sh
+   git clone https://github.com/<you>/Nodast.git   # your fork
+   cd Nodast
+   pnpm install
+   pnpm test && pnpm typecheck
+   ```
 
-## Qué se acepta ahora
+   You need Node.js 22.18 or newer and [pnpm](https://pnpm.io); the version is pinned in `packageManager`. Stable Rust is only needed if you touch `rust/`.
+3. **Find your way around.** `node src/demo.ts` and the two files in [`examples/`](examples/) show the whole loop in a few lines. Then:
 
-- Arreglos y tests del comportamiento ya descrito.
-- Operaciones de estructura en `src/tools.ts`, como `rename` y `param`, con su caso en el bench.
-- Crecer el lenguaje hacia programas reales, tras una issue que lo acuerde.
-- Mediciones nuevas en `bench/`, con otro modelo o con otra tarea.
+   | Path | What lives there |
+   | --- | --- |
+   | `src/ir.ts` | The node types: the whole language in one union |
+   | `src/parse.ts`, `src/print.ts` | Compact text to tree, tree to TypeScript |
+   | `src/check.ts` | Scopes and Hindley-Milner type inference |
+   | `src/edit.ts`, `src/contract.ts` | `(edits ...)`, and the loop with the model and its retries |
+   | `src/tools.ts` | `find`, `show`, `edit`, with `rename` and `param` |
+   | `src/binary.ts`, `src/grammar.ts` | Flat binary format; character-level grammar check |
+   | `rust/` | The same engine in Rust |
+   | `bench/` | The benchmark against plain text and a text agent |
+   | `test/` | `node:test` suites; no network, no key |
 
-En un pull request cabe una idea que se pueda probar sola. TypeScript sigue siendo la referencia de comportamiento: un cambio en el parser, el checker, el printer, las operaciones o el binario llega a la vez en `src/` y en `rust/`.
+4. **Make the change with a test that pins it.** A new behavior comes with a case in `test/`. If it changes the parser, the checker, the printer, the edits or the binary format, it lands in `src/` and `rust/` together.
+5. **Run the checks** that CI runs:
 
-## Qué no se acepta
+   ```sh
+   pnpm typecheck
+   pnpm test
+   cargo test --manifest-path rust/Cargo.toml   # if you touched rust/
+   ```
 
-- Reabrir JSON, hexadecimal o el AST de otro compilador como formato hacia el modelo.
-- Hacer que el modelo emita el fuente final.
-- Añadir otro printer mientras el de TypeScript no lleve un tiempo estable.
-- Dependencias que solo sirven para una fase futura.
-- Tests que llamen a una API de pago o exijan una clave.
+6. **Open the pull request** against `main` and fill in the template. The title follows [Conventional Commits](https://www.conventionalcommits.org/), for example `fix: accept index -1 in edit`, because pull requests are squash-merged and the title becomes the commit.
 
-Si crees que una decisión cerrada está mal, la issue tiene que decir qué se rompe con la decisión actual y cómo se mediría el arreglo. El pull request espera a esa conversación.
+Stuck? Ask on the issue or in [Discussions](https://github.com/R4F405/Nodast/discussions). A draft pull request with a question is welcome too.
+
+## Ideas for a first pull request
+
+These are not issues yet. If you want one, open an issue with the idea (or just the pull request, when it says so) and mention this list.
+
+- **`pnpm ask` without a `.env` file.** Today Node stops with `.env: not found`. Use `--env-file-if-exists` in `package.json` and print a hint about `.env.example` when the key is missing. *Pull request directly.*
+- **Round-trip tests.** For a set of programs, check that `parse(compact(tree))` gives the same tree and that `decode(encode(tree))` does too, including generated deep trees. *Pull request directly.*
+- **An example of the tool session.** `examples/tools.ts` that opens a program, calls `find` and `show`, and makes one `edit`, with the output explained in comments. Add it to `test/examples.test.ts`. *Pull request directly.*
+- **Translate `ROADMAP.md` to English** as `ROADMAP.en.md`, and link it from the README. *Pull request directly.*
+- **A tiny CLI.** `node src/cli.ts print file.nds` prints the TypeScript of a compact-text file, or the checker error with a non-zero exit code. *Needs an issue.*
+- **`pnpm ask` with OpenAI.** Let `ask` pick the provider the way the benchmark does, with `BENCH_PROVIDER` or its own variable. *Needs an issue.*
+- **Port `src/grammar.ts` to Rust**, with the same cases as `test/grammar.test.ts`. *Needs an issue.*
+- **Boolean operators** `and`, `or` and `not`, across parser, checker, printer, edits, binary and Rust. A language change, so *needs an issue* first.
+
+## Before writing code
+
+Open an issue first if the change:
+
+- adds a node kind
+- changes the compact text, the edits or the checker's errors
+- adds an output language
+- moves work from a future phase into the current one
+
+A documentation fix, a test for behavior that is already described, or a clear bug can go straight to a pull request.
+
+## What is welcome now
+
+- Fixes and tests for the described behavior.
+- Structural operations in `src/tools.ts`, like `rename` and `param`, with their case in the benchmark.
+- Growing the language toward real programs, after an issue that agrees on it.
+- New measurements in `bench/`, with another model or another task.
+
+One idea per pull request, one that can be tested on its own. TypeScript stays the behavior reference.
+
+## What is not accepted
+
+- Reopening JSON, hexadecimal or another compiler's AST as the format the model reads and writes.
+- Having the model emit the final source.
+- Another printer while the TypeScript one has not been stable for a while.
+- Dependencies that only serve a future phase.
+- Tests that call a paid API or need a key.
+
+If you think a design decision is wrong, the issue has to say what breaks with the current decision and how the fix would be measured. The pull request waits for that conversation.
 
 ## Issues
 
-Usa un título concreto. En el cuerpo:
+Use a concrete title. In the body:
 
-1. Qué fase del roadmap toca.
-2. Qué comportamiento se quiere poder demostrar.
-3. Qué queda fuera de ese cambio.
+1. Which part of the roadmap it touches.
+2. What behavior you want to be able to show.
+3. What stays out of the change.
 
-El idioma puede ser español o inglés. Uno solo por issue.
+One language per issue, English or Spanish.
 
 ## Pull requests
 
-`main` está protegida: todo entra por pull request y la CI tiene que pasar (TypeScript y Rust). Haz un fork o una rama, abre el pull request contra `main` y rellena la plantilla. Se fusiona con squash, así que el título del pull request queda como commit y sigue Conventional Commits.
+`main` is protected: everything goes through a pull request and CI has to pass (TypeScript and Rust). Fork or branch, open the pull request against `main` and fill in the template.
 
-- Una idea por pull request.
-- El cuerpo enlaza la issue cuando exista.
-- Si cambia el alcance, actualiza `ROADMAP.md` en el mismo pull request.
-- Describe cómo se probó. Si todavía no hay tests automáticos, escribe los casos a mano.
-- El diff no incluye `.env`, claves ni salidas de un modelo real con datos personales.
+- One idea per pull request.
+- Link the issue when there is one.
+- If the scope changes, update `ROADMAP.md` in the same pull request.
+- Say how it was tested. If there are no automated tests yet, write the cases by hand.
+- The diff does not include `.env`, keys, or real model output with personal data.
 
 ## Commits
 
-[Conventional Commits](https://www.conventionalcommits.org/), en imperativo:
+[Conventional Commits](https://www.conventionalcommits.org/), in the imperative:
 
 ```text
 feat: parse let and add into nodes
@@ -62,32 +117,24 @@ fix: reject a free variable in the checker
 docs: mark the parser phase as in progress
 ```
 
-El asunto puede ir en inglés. Si el cuerpo hace falta, español o inglés, el mismo idioma en todo el mensaje.
+The subject can be in English. If a body is needed, English or Spanish, the same language for the whole message.
 
-## Estilo
+## Style
 
-- TypeScript estricto.
-- Indentación de 2 espacios, UTF-8, LF, nueva línea final. Está en `.editorconfig`.
-- Nombres que digan el nodo o la fase: `parse`, `check`, `print`, `apply`.
-- El printer no decide validez. Si el árbol es ilegal, el fallo sale del parser o del checker.
-- Un comportamiento nuevo llega con un caso que lo fije. Un fixture del modelo es un archivo en el repo, no una llamada de red.
+- Strict TypeScript.
+- 2-space indentation, UTF-8, LF, final newline. It is in `.editorconfig`.
+- Names that say the node or the phase: `parse`, `check`, `print`, `apply`.
+- The printer does not decide validity. If a tree is illegal, the failure comes from the parser or the checker.
+- A model fixture is a file in the repo, not a network call.
 
-## Entorno
+## Benchmark
 
-- Node 22.18 o superior
-- pnpm 11.5, la versión del campo `packageManager` en `package.json`
-- Rust estable, para `rust/`
-- Un editor que respete `.editorconfig`
+`pnpm bench` calls a real model and needs a key in `.env`; see `.env.example`. Neither the tests nor CI use one. It writes the full report to `bench/openai.md` or `bench/minimax.md` and rebuilds the tables in `BENCH.md`; `pnpm bench:summary` rebuilds them without calling the model.
 
-```sh
-pnpm install
-pnpm test
-pnpm typecheck
-cargo test --manifest-path rust/Cargo.toml
-```
+## Conduct and security
 
-`pnpm bench` llama a un modelo de verdad y necesita una clave en `.env`; mira `.env.example`. Ni los tests ni la CI la usan. Escribe el informe completo en `bench/openai.md` o en `bench/minimax.md` y rehace las tablas de `BENCH.md`; `pnpm bench:summary` las rehace sin llamar al modelo.
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report a security problem privately, as described in [SECURITY.md](SECURITY.md), not in a public issue.
 
-## Licencia
+## License
 
-Con tu pull request aceptas licenciar tu contribución bajo [MIT](LICENSE).
+By sending a pull request you agree to license your contribution under the [MIT License](LICENSE).

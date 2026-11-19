@@ -1,29 +1,40 @@
-name: Propuesta
-description: Un nodo, una operación, un cambio del formato o una medición nueva
+name: Proposal / Propuesta
+description: A node, an operation, a format change or a new measurement / Un nodo, una operación, un cambio del formato o una medición nueva
 labels: [proposal]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        English or Spanish are both fine. Check the design decisions in the README first. / Vale en inglés o en español. Mira antes las decisiones de diseño del README.
+        Not a concrete proposal yet? Start in [Discussions](https://github.com/R4F405/Nodast/discussions). / ¿Todavía no es una propuesta concreta? Empieza en Discussions.
   - type: textarea
     id: problem
     attributes:
-      label: Qué problema resuelve
-      description: Qué falla o cuesta hoy, con un ejemplo.
+      label: Problem / Qué problema resuelve
+      description: What fails or costs too much today, with an example. / Qué falla o cuesta hoy, con un ejemplo.
     validations:
       required: true
   - type: textarea
     id: change
     attributes:
-      label: Qué cambiaría
-      description: Nodos, texto compacto, operaciones, checker, printer o bench.
+      label: Change / Qué cambiaría
+      description: Nodes, compact text, operations, checker, printer or bench. / Nodos, texto compacto, operaciones, checker, printer o bench.
     validations:
       required: true
   - type: textarea
     id: measure
     attributes:
-      label: Cómo se mediría
-      description: Qué test o qué pasada del bench demostraría que mejora.
+      label: How to measure it / Cómo se mediría
+      description: Which test or bench pass would show it helps. / Qué test o qué pasada del bench demostraría que mejora.
     validations:
       required: true
   - type: textarea
     id: out
     attributes:
-      label: Qué queda fuera
+      label: Out of scope / Qué queda fuera
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Help / Ayuda
+      options:
+        - label: I would like to work on this. / Me gustaría hacerlo yo.

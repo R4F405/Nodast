@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Preguntas e ideas abiertas
+  - name: Questions and open ideas / Preguntas e ideas abiertas
     url: https://github.com/R4F405/Nodast/discussions
-    about: Para dudas o ideas que todavía no son una propuesta concreta.
-  - name: Fallo de seguridad
+    about: For questions or ideas that are not a concrete proposal yet. / Para dudas o ideas que todavía no son una propuesta concreta.
+  - name: Security problem / Fallo de seguridad
     url: https://github.com/R4F405/Nodast/security/advisories/new
-    about: Avisa en privado, no en una issue pública.
+    about: Report it privately, not in a public issue. / Avisa en privado, no en una issue pública.
