@@ -42,7 +42,7 @@ export function demo(): string[] {
 }
 
 function idOf(session: Session, kind: string, name: string): string {
-  const hit = find(session, { kind, name, limit: 1 }).split(" ")[0];
+  const hit = find(session, { kind, name, limit: 1 }).split(":")[0];
   if (hit === undefined || !hit.startsWith("n")) throw new Error(`no ${kind} ${name}`);
   return hit;
 }

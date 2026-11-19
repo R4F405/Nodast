@@ -19,10 +19,12 @@ test("opens a program and summarises it", () => {
 
 test("finds nodes by text, kind and name", () => {
   const { session: s } = session();
-  assert.equal(find(s, { text: "70002" }), "n10 in n8:(sub ...): n10:70002");
-  assert.equal(find(s, { text: "(add v0 70001)" }), "n4 in n3:(let v1 ...): n4:(add n5:v0 n6:70001)");
-  assert.equal(find(s, { name: "v1" }), "n3 in n1:(let v0 ...): n3:(let v1 n4:(add n5:v0 n6:70001) n7:(let v2 n8:... n11:v2))\nn9 in n8:(sub ...): n9:v1");
-  assert.equal(find(s, { kind: "sub", limit: 5 }), "n8 in n7:(let v2 ...): n8:(sub n9:v1 n10:70002)");
+  assert.equal(find(s, { text: "70002" }), "n10:70002 in n8:(sub n9:v1 n10:70002)");
+  assert.equal(find(s, { text: "(add v0 70001)" }), "n4:(add n5:v0 n6:70001) in n3:(let v1 n4:(add n5:v0 n6:70001) n7:(let v2 n8:... n11:v2))");
+  assert.equal(find(s, { name: "v1" }), "n3:(let v1 n4:(add n5:v0 n6:70001) n7:(let v2 n8:... n11:v2))\nn9:v1 in n8:(sub n9:v1 n10:70002)");
+  // A bare name as text finds the let that binds it as well as its uses.
+  assert.equal(find(s, { text: "v1" }), find(s, { name: "v1" }));
+  assert.equal(find(s, { kind: "sub", limit: 5 }), "n8:(sub n9:v1 n10:70002) in n7:(let v2 n8:(sub n9:v1 n10:70002) n11:v2)");
   assert.equal(find(s, { text: "42" }), "no match");
   assert.match(find(s, { kind: "let", limit: 1 }), /\n2 more; narrow the query$/);
 });
@@ -53,9 +55,11 @@ test("wraps bare operations and explains the expected shape", () => {
 
 test("ignores blank query fields and names unknown kinds", () => {
   const { session: s } = session();
-  assert.equal(find(s, { text: "70002", kind: "", name: " " }), "n10 in n8:(sub ...): n10:70002");
+  assert.equal(find(s, { text: "70002", kind: "", name: " " }), "n10:70002 in n8:(sub n9:v1 n10:70002)");
   assert.equal(find(s, { text: "", kind: "", name: "" }), "empty query; give text, kind or name");
-  assert.match(find(s, { text: "70002", kind: "number" }), /^unknown kind number; kinds are num bool /);
+  assert.match(find(s, { text: "70002", kind: "list" }), /^unknown kind list; kinds are num bool /);
+  // Kind names models reach for map to the node kinds.
+  assert.equal(find(s, { text: "70002", kind: "number" }), "n10:70002 in n8:(sub n9:v1 n10:70002)");
 });
 
 test("applies one edit given as separate fields", () => {
@@ -110,6 +114,15 @@ test("never reuses an id the session handed out", () => {
   edit(s, "(replace n12 8)");
   assert.equal(show(s, "n8", 1), "n8:(sub n9:v1 n13:8)");
   assert.equal(show(s, "n12"), "unknown-id n12");
+});
+
+test("an edit can name its node by exact text instead of id", () => {
+  const { session: s } = session();
+  assert.equal(change(s, { id: "", text: "70002", expr: "7" }), "ok, type number, now n8:(sub n9:v1 n12:7)");
+  assert.equal(change(s, { id: "", text: "123", expr: "7" }), "rejected: no node is exactly 123");
+  const two = open("(let a 1 (add a a))");
+  if (!two.ok) throw new Error(two.error);
+  assert.match(change(two.session, { id: "", text: "a", expr: "2" }), /^rejected: 2 nodes are a; pick an id:\n/);
 });
 
 test("shows a small program whole and hides a large one", () => {

@@ -22,7 +22,7 @@ const RESERVED = new Set([
 ]);
 
 const BINARY = new Set(["add", "sub", "mul", "div", "eq", "lt", "gt", "lte", "gte"]);
-const EDIT_OPS = ["replace", "insert", "delete"];
+const EDIT_OPS = ["replace", "insert", "delete", "rename", "param"];
 
 const PROBES = [
   " ",
@@ -199,7 +199,12 @@ class Scan {
     const id = this.readName();
     if (!id.ended) return "partial";
     if (op.name === "delete") return this.close();
-    if (op.name === "insert") {
+    if (op.name === "rename" || op.name === "param") {
+      const name = this.newName();
+      if (name !== "ok") return name;
+      if (op.name === "rename") return this.close();
+    }
+    if (op.name === "insert" || op.name === "param") {
       const index = this.indexNum();
       if (index !== "ok") return index;
     }
@@ -257,6 +262,16 @@ class Scan {
     if (name.name === "true" || name.name === "false") return "ok";
     if (RESERVED.has(name.name)) return "bad";
     return "ok";
+  }
+
+  // The new name of a rename or param: a name that is not reserved.
+  private newName(): Flag {
+    this.skipWs();
+    if (this.eof()) return "partial";
+    if (!isNameStart(this.peek())) return "bad";
+    const name = this.readName();
+    if (!name.ended) return "partial";
+    return RESERVED.has(name.name) ? "bad" : "ok";
   }
 
   private close(): Flag {

@@ -61,6 +61,10 @@ test("an edit list may stop only when every edit is closed", () => {
   expectState("(edits (insert n1 0 (add 1 2)))", "edits", true, true);
   expectState("(edits (delete n1))", "edits", true, true);
   expectState("(edits (replace n1 1) (delete n2))", "edits", true, true);
+  expectState("(edits (rename n1 scale))", "edits", true, true);
+  expectState("(edits (param n1 k 1 (add 1 2)))", "edits", true, true);
+  expectState("(edits (rename n1 let))", "edits", false, false);
+  expectState("(edits (param n1 k x 2))", "edits", false, false);
   expectState("(edits", "edits", false, true);
   expectState("(edits (rep", "edits", false, true);
   expectState("(edits (delete n1)", "edits", false, true);

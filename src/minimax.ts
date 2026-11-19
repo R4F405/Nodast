@@ -15,7 +15,7 @@ export function minimax(options: MiniMaxOptions): Model {
   const model = options.model ?? DEFAULT_MODEL;
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
   return {
-    async complete(prompt: string): Promise<string> {
+    async complete(prompt: string, system?: string): Promise<string> {
       const response = await fetchImpl(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
@@ -24,7 +24,7 @@ export function minimax(options: MiniMaxOptions): Model {
         },
         body: JSON.stringify({
           model,
-          messages: [{ role: "user", content: prompt }],
+          messages: [...(system === undefined ? [] : [{ role: "system", content: system }]), { role: "user", content: prompt }],
           max_completion_tokens: 1024,
           reasoning_effort: "low",
         }),

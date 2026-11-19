@@ -132,6 +132,55 @@ test("stops when the model throws", async () => {
   assert.deepEqual(result, { ok: false, attempts: 1, error: { code: "model-error", message: "MiniMax 401" } });
 });
 
+test("renames a binding and its uses through the edit list", async () => {
+  const model = fixture(["(edits (rename n1 scale))"]);
+  const result = await run({ goal: "rename rate", program: "(let rate 3 (let rate_cap 7 (add rate rate_cap)))" }, model);
+  assert.deepEqual(result, { ok: true, attempts: 1, source: "const scale = 3;\nconst rate_cap = 7;\nscale + rate_cap;\n" });
+});
+
+test("adds a parameter and updates every call through the edit list", async () => {
+  const model = fixture(["(edits (param n1 k 1 2))"]);
+  const result = await run({ goal: "widen f", program: "(let f (fn (x) (add x 1)) (add (f 1) (f 2)))" }, model);
+  assert.deepEqual(result, { ok: true, attempts: 1, source: "const f = (x, k) => x + 1;\nf(1, 2) + f(2, 2);\n" });
+});
+
+test("a rejected rename keeps the program and says why", async () => {
+  const model = fixture(["(edits (rename n1 rate_cap))", "(edits (rename n1 scale))"]);
+  const result = await run({ goal: "rename rate", program: "(let rate 3 (let rate_cap 7 (add rate rate_cap)))" }, model);
+  assert.equal(result.ok, true);
+  assert.match(model.prompts[1] ?? "", /error:\nname rate_cap is already used at 0\n/);
+});
+
+test("ignores ids copied into expr", async () => {
+  const model = fixture(["(edits (replace n1 n7:(sub n8:2 n9:1)))"]);
+  const result = await run({ goal: "subtract", program: "(add 1 2)" }, model);
+  assert.deepEqual(result, { ok: true, attempts: 1, source: "2 - 1;\n" });
+});
+
+test("sends the fixed instructions as system and the task as the user message", async () => {
+  const seen: { prompt: string; system: string | undefined }[] = [];
+  const model: Model = {
+    complete(prompt, system) {
+      seen.push({ prompt, system });
+      return "(edits (replace n2 9))";
+    },
+  };
+  await run({ goal: "change the left number", program: "(add 1 2)" }, model);
+  assert.match(seen[0]?.system ?? "", /^Edit the Nodast program the user gives/);
+  assert.match(seen[0]?.system ?? "", /\(rename id name\)/);
+  assert.doesNotMatch(seen[0]?.system ?? "", /change the left number/);
+  assert.equal(seen[0]?.prompt, "goal: change the left number\nprogram: n1:(add n2:1 n3:2)\n");
+});
+
+test("a scoped op that fails names the edit that failed", async () => {
+  const model = fixture(["(edits (replace n2 4) (param n9 k 0 1))", "(edits (rename n7 y))", "(edits (rename n3 y))", "(edits (rename n1 y))"]);
+  const result = await run({ goal: "rename x", program: "(let x 1 (add x 2))" }, model, { attempts: 4 });
+  assert.equal(result.ok, true);
+  assert.match(model.prompts[1] ?? "", /error:\nunknown-id n9 at 1\n/);
+  assert.match(model.prompts[2] ?? "", /error:\nunknown-id n7 at 0\n/);
+  assert.match(model.prompts[3] ?? "", /error:\nn3 is not a let or a bound use at 0\n/);
+});
+
 test("collapses a goal onto one line", async () => {
   const model = fixture(["1"]);
   await run({ goal: "bind\nthe sum" }, model);

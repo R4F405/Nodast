@@ -4,9 +4,12 @@ import { applyEdits, type Edit, type EditError } from "./edit.ts";
 import type { Expr, SourcePosition } from "./ir.ts";
 import { parse } from "./parse.ts";
 import { print } from "./print.ts";
+import { addParameter, collectIds, renameBinding, renumber } from "./scope.ts";
 
+// prompt is the user message; system holds the fixed instructions, which a client should send as a
+// system message so the task is never mistaken for one of the examples.
 export type Model = {
-  complete(prompt: string): string | Promise<string>;
+  complete(prompt: string, system?: string): string | Promise<string>;
 };
 
 export type RunInput = {
@@ -21,6 +24,7 @@ export type ContractError =
   | { code: "parse"; message: string; line: number; column: number }
   | { code: "response"; message: string; line: number; column: number }
   | { code: "model-error"; message: string }
+  | { code: "op"; message: string; at: number }
   | CheckError
   | EditError;
 
@@ -31,7 +35,9 @@ export type RunResult =
 type RawEdit =
   | { op: "replace"; id: string; expr: Expr }
   | { op: "insert"; id: string; index: number; expr: Expr }
-  | { op: "delete"; id: string };
+  | { op: "delete"; id: string }
+  | { op: "rename"; id: string; name: string }
+  | { op: "param"; id: string; name: string; index: number; expr: string };
 
 type Rejection = { response: string; error: string };
 
@@ -40,10 +46,11 @@ const DEFAULT_ATTEMPTS = 3;
 export async function run(
   input: RunInput,
   model: Model,
-  options?: { attempts?: number; layout?: Layout },
+  options?: { attempts?: number; layout?: Layout; prompts?: Prompts },
 ): Promise<RunResult> {
   const attempts = options?.attempts ?? DEFAULT_ATTEMPTS;
   const layout = options?.layout ?? "lines";
+  const prompts = options?.prompts ?? {};
   const loaded = loadProgram(input.program);
   if (!loaded.ok) return { ok: false, attempts: 0, error: loaded.error };
 
@@ -52,7 +59,8 @@ export async function run(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let reply: string;
     try {
-      reply = await model.complete(renderPrompt(input.goal, loaded.tree, rejections, layout));
+      const prompt = renderPrompt(input.goal, loaded.tree, rejections, layout, prompts);
+      reply = await model.complete(prompt.user, prompt.system);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { ok: false, attempts: attempt, error: { code: "model-error", message } };
@@ -65,12 +73,13 @@ export async function run(
   return { ok: false, attempts, error: last };
 }
 
+// prompts records the system and the user message of each call joined by a blank line.
 export function fixture(responses: readonly string[]): Model & { prompts: string[] } {
   const prompts: string[] = [];
   return {
     prompts,
-    complete(prompt: string) {
-      prompts.push(prompt);
+    complete(prompt: string, system?: string) {
+      prompts.push(system === undefined ? prompt : `${system}\n\n${prompt}`);
       const response = responses[prompts.length - 1];
       if (response === undefined) throw new Error("fixture exhausted");
       return response;
@@ -133,7 +142,9 @@ export function applyEditText(
   retired: ReadonlySet<string> = new Set(),
 ): { ok: true; tree: Expr; type: string } | { ok: false; error: ContractError; tree?: Expr } {
   if (leadingName(text) !== "edits") return { ok: false, error: { code: "expected-edits" } };
-  const edits = parseEdits(text);
+  // Models often copy ids into expr, like (replace n8 (sub n9:v1 n10:7)). A name never ends in ":", so an
+  // id prefix can only be that: drop it instead of rejecting the edit.
+  const edits = parseEdits(text.replace(/\bn\d+:/g, ""));
   if (!edits.ok) return edits;
   const applied = applyAll(tree, edits.edits, retired);
   if (!applied.ok) return applied;
@@ -146,11 +157,23 @@ function applyAll(
   tree: Expr,
   edits: readonly RawEdit[],
   retired: ReadonlySet<string>,
-): { ok: true; tree: Expr } | { ok: false; error: EditError } {
+): { ok: true; tree: Expr } | { ok: false; error: EditError | { code: "op"; message: string; at: number } } {
   let draft = tree;
   for (let at = 0; at < edits.length; at += 1) {
     const raw = edits[at];
     if (raw === undefined) continue;
+    if (raw.op === "rename" || raw.op === "param") {
+      // Scoped ops build the whole new tree at once; the checker still runs once, after the last edit.
+      const result =
+        raw.op === "rename"
+          ? renameBinding(draft, raw.id, raw.name)
+          : addParameter(draft, raw.id, raw.name, raw.expr, raw.index, new Set(retired));
+      if (!result.ok) {
+        return { ok: false, error: result.unknown ? { code: "unknown-id", id: raw.id, at } : { code: "op", message: result.message, at } };
+      }
+      draft = result.tree;
+      continue;
+    }
     const edit = prepare(draft, raw, retired);
     const applied = applyEdits(draft, [edit]);
     if (!applied.ok) return { ok: false, error: { ...applied.error, at } };
@@ -159,7 +182,7 @@ function applyAll(
   return { ok: true, tree: draft };
 }
 
-function prepare(tree: Expr, edit: RawEdit, retired: ReadonlySet<string>): Edit {
+function prepare(tree: Expr, edit: Exclude<RawEdit, { op: "rename" | "param" }>, retired: ReadonlySet<string>): Edit {
   if (edit.op === "delete") return { op: "delete", id: edit.id };
   const taken = collectIds(tree);
   for (const id of retired) taken.add(id);
@@ -170,27 +193,35 @@ function prepare(tree: Expr, edit: RawEdit, retired: ReadonlySet<string>): Edit 
 
 // The grammar every prompt teaches. Writing and editing add their own rules and examples on top,
 // so a model that writes never reads about edits and one that edits never reads write examples.
+// Calls and fn take any number of arguments: "each form takes exactly the arguments shown" next to (f a b)
+// made MiniMax believe every call takes two.
 export const GRAMMAR = [
   "language:",
   "number: 0 12 -4    bool: true false    name: x total_2",
   "(let name value body)    bind name to value, visible only inside body",
-  "(fn (a b) body)          function; parameters are bare names, no types",
+  "(fn (n) body) (fn (a b) body)    function with any number of parameters; bare names, no types",
+  "(f x) (f a b)            call f with any number of arguments",
   "(if cond then else)",
   "(add a b) (sub a b) (mul a b) (div a b)    numbers to number",
   "(eq a b) (lt a b) (gt a b) (lte a b) (gte a b)    numbers to bool",
-  "(f a b)                  call f with a and b",
-  "Each form takes exactly the arguments shown. There are no infix operators and no other keywords.",
+  "let, if and the operators take exactly the arguments shown. No infix operators, no other keywords.",
 ];
 
 export const EDIT_RULES = [
   "edits:",
-  "(edits (replace id expr) (insert id index expr) (delete id))",
-  "Each node of the program is prefixed with its id, like n4:3. Copy ids exactly; never compute them. Ids never appear inside expr.",
+  "(edits (replace id expr) (insert id index expr) (delete id) (rename id name) (param id name index expr))",
+  "Each node of the program is prefixed with its id, like n4:3. Copy each id from the program; never compute one. expr is written without ids.",
   "replace swaps any node. insert adds an argument to the call with that id. delete removes that call argument.",
+  "rename gives a let, or the binding a use at id refers to, a new name, with every use of it and nothing else.",
+  "param adds parameter name at index to a let-bound fn (id is its let, its fn or a use) and passes expr at every call of it.",
+  "Edits apply in order.",
 ];
 
+// The fixed instructions go to the system message and the goal to the user message: with both in one
+// user message, MiniMax spent most of its reasoning on which line was the task.
 export const WRITE_PROMPT = [
-  "Reply with only one program. No prose, no code fences.",
+  "Write one Nodast program, a tiny Lisp, that does the goal the user gives.",
+  "Reply with only the program: no prose, no code fences. Its value is the result; when the goal asks for a function, the program is that fn.",
   "",
   ...GRAMMAR,
   "",
@@ -203,7 +234,7 @@ export const WRITE_PROMPT = [
 ];
 
 export const EDIT_PROMPT = [
-  "Reply with only one (edits ...) list. No prose, no code fences.",
+  "Edit the Nodast program the user gives, a tiny Lisp, so it does the goal. Reply with only one (edits ...) list: no prose, no code fences.",
   "",
   ...GRAMMAR,
   "",
@@ -215,8 +246,18 @@ export const EDIT_PROMPT = [
   "(edits (replace n4 5))",
 ];
 
-function renderPrompt(goal: string, program: Expr | undefined, rejections: readonly Rejection[], layout: Layout): string {
-  const lines = [...(program === undefined ? WRITE_PROMPT : EDIT_PROMPT), "", `goal: ${goal.replace(/\s+/g, " ").trim()}`];
+// Replacements for the fixed instructions, so a caller can try other wordings or examples.
+export type Prompts = { write?: readonly string[]; edit?: readonly string[] };
+
+function renderPrompt(
+  goal: string,
+  program: Expr | undefined,
+  rejections: readonly Rejection[],
+  layout: Layout,
+  prompts: Prompts = {},
+): { system: string; user: string } {
+  const head = program === undefined ? (prompts.write ?? WRITE_PROMPT) : (prompts.edit ?? EDIT_PROMPT);
+  const lines = [`goal: ${goal.replace(/\s+/g, " ").trim()}`];
   if (program !== undefined) {
     const shown = compact(program, { ids: true, layout });
     lines.push(shown.includes("\n") ? `program:\n${shown}` : `program: ${shown}`);
@@ -225,7 +266,7 @@ function renderPrompt(goal: string, program: Expr | undefined, rejections: reado
     lines.push("", "rejected:", rejection.response.trim(), "error:", rejection.error);
   }
   if (rejections.length > 0) lines.push("", "Reply again with a corrected answer.");
-  return `${lines.join("\n")}\n`;
+  return { system: head.join("\n"), user: `${lines.join("\n")}\n` };
 }
 
 export function errorLine(error: ContractError, tree?: Expr): string {
@@ -249,6 +290,8 @@ function baseLine(error: ContractError): string {
       return `response ${error.line}:${error.column} ${error.message}`;
     case "model-error":
       return `model-error ${error.message}`;
+    case "op":
+      return `${error.message} at ${error.at}`;
     case "duplicate-id":
       return "at" in error ? `duplicate-id ${error.id} at ${error.at}` : `duplicate-id ${error.nodeId}`;
     case "undefined-name":
@@ -369,6 +412,28 @@ class Scanner {
       this.skipWs();
       this.expectClose(open);
       return { op: "insert", id, index, expr };
+    }
+    if (name === "rename") {
+      this.skipWs();
+      if (!isNameStart(this.peek())) this.fail("Expected a name", this.position());
+      const to = this.readName();
+      this.skipWs();
+      this.expectClose(open);
+      return { op: "rename", id, name: to };
+    }
+    if (name === "param") {
+      this.skipWs();
+      if (!isNameStart(this.peek())) this.fail("Expected a name", this.position());
+      const to = this.readName();
+      this.skipWs();
+      const index = this.readIndex();
+      this.skipWs();
+      const from = this.index;
+      this.readExpr();
+      const expr = this.source.slice(from, this.index);
+      this.skipWs();
+      this.expectClose(open);
+      return { op: "param", id, name: to, index, expr };
     }
     this.fail(`Unknown edit ${name}`, namePos);
   }
@@ -497,80 +562,6 @@ class Scanner {
 
   private fail(message: string, position: SourcePosition): never {
     throw new ResponseFailure(message, position);
-  }
-}
-
-function renumber(expr: Expr, taken: Set<string>): Expr {
-  let next = 1;
-  const fresh = (): string => {
-    while (taken.has(`n${next}`)) next += 1;
-    const id = `n${next}`;
-    taken.add(id);
-    next += 1;
-    return id;
-  };
-  const walk = (node: Expr): Expr => {
-    const id = fresh();
-    switch (node.kind) {
-      case "num":
-        return { id, kind: "num", value: node.value };
-      case "bool":
-        return { id, kind: "bool", value: node.value };
-      case "var":
-        return { id, kind: "var", name: node.name };
-      case "add":
-      case "sub":
-      case "mul":
-      case "div":
-      case "eq":
-      case "lt":
-      case "gt":
-      case "lte":
-      case "gte":
-        return { id, kind: node.kind, left: walk(node.left), right: walk(node.right) };
-      case "let":
-        return { id, kind: "let", name: node.name, value: walk(node.value), body: walk(node.body) };
-      case "fn":
-        return { id, kind: "fn", params: [...node.params], body: walk(node.body) };
-      case "call":
-        return { id, kind: "call", callee: walk(node.callee), args: node.args.map((arg) => walk(arg)) };
-      case "if":
-        return { id, kind: "if", cond: walk(node.cond), then: walk(node.then), else: walk(node.else) };
-    }
-  };
-  return walk(expr);
-}
-
-function collectIds(expr: Expr, into = new Set<string>()): Set<string> {
-  into.add(expr.id);
-  for (const child of children(expr)) collectIds(child, into);
-  return into;
-}
-
-function children(expr: Expr): Expr[] {
-  switch (expr.kind) {
-    case "num":
-    case "bool":
-    case "var":
-      return [];
-    case "add":
-    case "sub":
-    case "mul":
-    case "div":
-    case "eq":
-    case "lt":
-    case "gt":
-    case "lte":
-    case "gte":
-      return [expr.left, expr.right];
-    case "let":
-      return [expr.value, expr.body];
-    case "fn":
-      return [expr.body];
-    case "call":
-      return [expr.callee, ...expr.args];
-    case "if":
-      return [expr.cond, expr.then, expr.else];
   }
 }
 

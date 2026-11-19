@@ -26,6 +26,19 @@ test("posts the prompt to MiniMax and returns the reply", async () => {
   assert.deepEqual(body.messages, [{ role: "user", content: "goal: one" }]);
 });
 
+test("sends the instructions as a system message when given", async () => {
+  let body = "";
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    body = String(init?.body);
+    return new Response(JSON.stringify({ choices: [{ message: { content: "1" } }] }), { status: 200 });
+  };
+  await minimax({ apiKey: "k", fetch: fetchImpl }).complete("goal: one", "rules");
+  assert.deepEqual((JSON.parse(body) as { messages: unknown }).messages, [
+    { role: "system", content: "rules" },
+    { role: "user", content: "goal: one" },
+  ]);
+});
+
 test("reads the key, model, and base url from the environment", async () => {
   const seen: { url: string; body: string }[] = [];
   const fetchImpl: typeof fetch = async (input, init) => {
