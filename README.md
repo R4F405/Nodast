@@ -153,7 +153,7 @@ What it says:
 - **The language is small on purpose:** numbers, booleans, `let`, pure functions, calls and `if`. No strings, lists or records yet, so it does not edit real-world code yet.
 - **The benchmark is synthetic:** long chains of `let` and repeated calls, built to isolate one kind of edit at a time.
 - **The format is not smaller than TypeScript.** The compact text is as large as the TypeScript or larger, and the tree with ids is almost twice its size. The savings come from editing pieces, not from the format.
-- **Results depend on the model.** With an earlier MiniMax pass, writing from scratch was less reliable in Nodast's format than in plain TypeScript; see [BENCH.md](BENCH.md) for the current MiniMax numbers. Claude as a provider is an [open issue](https://github.com/R4F405/Nodast/issues/11).
+- **Results depend on the model.** With MiniMax-M3, a weaker model, scoped renames and adding a parameter still go to Nodast (5/5 valid on the first try, against 0–1/5 for the text agent), but a single local edit in a large file costs more than with the text agent; see [BENCH.md](BENCH.md). Claude as a provider is an [open issue](https://github.com/R4F405/Nodast/issues/11).
 - **The text agent varies between runs.** In other passes the rename gap reached 2.8 times on cost and latency; the table shows the pass in the report.
 - **Not a package yet.** Nodast is not on npm; the code is a proof of concept you run from the repository.
 
