@@ -29,7 +29,15 @@ import { summarize } from "./summary.ts";
 const ATTEMPTS = 3;
 const API_TRIES = 5;
 
-type Reply = { content: string; completionTokens: number | null; promptTokens: number | null; ms: number };
+type Reply = {
+  content: string;
+  completionTokens: number | null;
+  promptTokens: number | null;
+  reasoningTokens?: number | null;
+  cachedTokens?: number | null;
+  raw?: string;
+  ms: number;
+};
 
 type Loop = {
   infra: boolean;
@@ -43,6 +51,8 @@ type Loop = {
   replyTokens: number;
   promptTokens: number | null;
   inTokens: number;
+  reasoning: number;
+  cached: number;
   calls: number;
   ms: number;
 };
@@ -82,6 +92,14 @@ const CONCURRENCY = Number(process.env.BENCH_CONCURRENCY || 2);
 // OpenAI reasoning models reject sampling parameters, so temperature only goes to MiniMax.
 const TEMPERATURE = Number(process.env.BENCH_TEMPERATURE || 0.01);
 const LOG = process.env.BENCH_LOG;
+const EFFORT = process.env.BENCH_EFFORT || "low";
+// "|"-separated list of side names to run; the others are skipped. Empty runs every side.
+const ONLY = (process.env.BENCH_SIDES || "").split("|").map((s) => s.trim()).filter((s) => s !== "");
+const wanted = (side: string): boolean => ONLY.length === 0 || ONLY.includes(side);
+// Comma list of goal indices to run in the write bench.
+const GOAL_PICK = (process.env.BENCH_GOALS || "").split(",").map((s) => s.trim()).filter((s) => s !== "").map(Number);
+// Keep MiniMax <think> blocks in the history sent back on the next tool turn (default) or drop them.
+const KEEP_THINK = process.env.BENCH_KEEP_THINK !== "0";
 // Each provider has its full report in bench/; BENCH.md only summarizes them.
 const DEFAULT_OUT = `bench/${PROVIDER}.md`;
 const OUT = process.env.BENCH_OUT || DEFAULT_OUT;
@@ -122,8 +140,16 @@ function count(value: unknown): number | null {
   return typeof value === "number" ? value : null;
 }
 
-function completionsChat(prompt: string, tools?: readonly ToolSpec[]): Chat {
-  const messages: unknown[] = [{ role: "user", content: prompt }];
+let chats = 0;
+
+// Every side sends its fixed instructions as the system message and the task (goal, program or file) as the
+// user message, so the framing is the same for Nodast and for TypeScript.
+function completionsChat(system: string, prompt: string, tools?: readonly ToolSpec[]): Chat {
+  const chatId = (chats += 1);
+  const messages: unknown[] = [
+    { role: "system", content: system },
+    { role: "user", content: prompt },
+  ];
   const wire = tools?.map((tool) => ({ type: "function", function: tool }));
   return {
     async send() {
@@ -132,15 +158,21 @@ function completionsChat(prompt: string, tools?: readonly ToolSpec[]): Chat {
         messages,
         ...(wire === undefined ? {} : { tools: wire }),
         max_completion_tokens: 16384,
-        reasoning_effort: "low",
+        reasoning_effort: EFFORT,
         temperature: TEMPERATURE,
       });
       const body = json as {
         choices?: { message?: Record<string, unknown> & { content?: string | null; tool_calls?: { id?: string; function?: { name?: string; arguments?: unknown } }[] } }[];
-        usage?: { completion_tokens?: number; prompt_tokens?: number };
+        usage?: {
+          completion_tokens?: number;
+          prompt_tokens?: number;
+          completion_tokens_details?: { reasoning_tokens?: number };
+          prompt_tokens_details?: { cached_tokens?: number };
+        };
       };
       const message = body.choices?.[0]?.message ?? {};
-      const content = typeof message.content === "string" ? stripThink(message.content) : "";
+      const raw = typeof message.content === "string" ? message.content : "";
+      const content = stripThink(raw);
       // Some OpenAI-compatible servers send arguments as an object instead of a JSON string.
       const calls = (Array.isArray(message.tool_calls) ? message.tool_calls : []).map((call) => {
         const args = call.function?.arguments;
@@ -150,19 +182,37 @@ function completionsChat(prompt: string, tools?: readonly ToolSpec[]): Chat {
           arguments: typeof args === "string" ? args : JSON.stringify(args ?? {}),
         };
       });
-      if (content.trim() === "" && calls.length === 0) throw new InfraError(`${SETUP.label} returned an empty reply`);
-      messages.push(message);
-      return { content, completionTokens: count(body.usage?.completion_tokens), promptTokens: count(body.usage?.prompt_tokens), ms, calls };
+      // A reply cut inside <think> (max tokens) is the model's failure, not the API's: keep it as an empty answer
+      // so the loop counts it, instead of retrying it five times and excluding it.
+      const cut = raw.includes("<think>") && !raw.includes("</think>");
+      if (content.trim() === "" && calls.length === 0 && !cut) throw new InfraError(`${SETUP.label} returned an empty reply`);
+      messages.push(KEEP_THINK ? message : { ...message, content });
+      const reply = {
+        content,
+        completionTokens: count(body.usage?.completion_tokens),
+        promptTokens: count(body.usage?.prompt_tokens),
+        reasoningTokens: count(body.usage?.completion_tokens_details?.reasoning_tokens),
+        cachedTokens: count(body.usage?.prompt_tokens_details?.cached_tokens),
+        raw,
+        ms,
+        calls,
+      };
+      log({ call: "completions", chat: chatId, tools: wire !== undefined, system: messages.length === 3 ? system : undefined, prompt: messages.length === 3 ? prompt : undefined, raw, calls, usage: body.usage, ms });
+      return reply;
     },
     answer(call, text) {
       messages.push({ role: "tool", tool_call_id: call.id, content: text });
     },
-    transcript: () => messages.slice(1),
+    transcript: () => messages.slice(2),
   };
 }
 
-function responsesChat(prompt: string, tools?: readonly ToolSpec[]): Chat {
-  const input: unknown[] = [{ role: "user", content: prompt }];
+function responsesChat(system: string, prompt: string, tools?: readonly ToolSpec[]): Chat {
+  const chatId = (chats += 1);
+  const input: unknown[] = [
+    { role: "developer", content: system },
+    { role: "user", content: prompt },
+  ];
   const wire = tools?.map((tool) => ({ type: "function", ...tool }));
   return {
     async send() {
@@ -171,11 +221,17 @@ function responsesChat(prompt: string, tools?: readonly ToolSpec[]): Chat {
         input,
         ...(wire === undefined ? {} : { tools: wire }),
         max_output_tokens: 16384,
-        reasoning: { effort: "low" },
+        reasoning: { effort: EFFORT },
       });
       const body = json as {
+        status?: string;
         output?: (Record<string, unknown> & { type?: string; content?: { type?: string; text?: string }[]; call_id?: string; name?: string; arguments?: string })[];
-        usage?: { input_tokens?: number; output_tokens?: number };
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          input_tokens_details?: { cached_tokens?: number };
+          output_tokens_details?: { reasoning_tokens?: number };
+        };
       };
       const output = Array.isArray(body.output) ? body.output : [];
       const content = output
@@ -187,24 +243,35 @@ function responsesChat(prompt: string, tools?: readonly ToolSpec[]): Chat {
       const calls = output
         .filter((item) => item.type === "function_call")
         .map((item) => ({ id: item.call_id ?? "", name: item.name ?? "", arguments: item.arguments ?? "" }));
-      if (content.trim() === "" && calls.length === 0) throw new InfraError(`${SETUP.label} returned an empty reply`);
+      // An incomplete response (output token limit) is the model's failure: count it as an empty answer.
+      if (content.trim() === "" && calls.length === 0 && body.status !== "incomplete") throw new InfraError(`${SETUP.label} returned an empty reply`);
+      const first = input.length === 2;
       input.push(...output);
-      return { content, completionTokens: count(body.usage?.output_tokens), promptTokens: count(body.usage?.input_tokens), ms, calls };
+      log({ call: "responses", chat: chatId, tools: wire !== undefined, system: first ? system : undefined, prompt: first ? prompt : undefined, content, calls, usage: body.usage, ms });
+      return {
+        content,
+        completionTokens: count(body.usage?.output_tokens),
+        promptTokens: count(body.usage?.input_tokens),
+        reasoningTokens: count(body.usage?.output_tokens_details?.reasoning_tokens),
+        cachedTokens: count(body.usage?.input_tokens_details?.cached_tokens),
+        ms,
+        calls,
+      };
     },
     answer(call, text) {
       input.push({ type: "function_call_output", call_id: call.id, output: text });
     },
-    transcript: () => input.slice(1),
+    transcript: () => input.slice(2),
   };
 }
 
-function openChat(prompt: string, tools?: readonly ToolSpec[]): Chat {
-  const chat = PROVIDER === "openai" ? responsesChat(prompt, tools) : completionsChat(prompt, tools);
+function openChat(system: string, prompt: string, tools?: readonly ToolSpec[]): Chat {
+  const chat = PROVIDER === "openai" ? responsesChat(system, prompt, tools) : completionsChat(system, prompt, tools);
   return { ...chat, send: () => retried(() => chat.send()) };
 }
 
-async function ask(prompt: string): Promise<Reply> {
-  return openChat(prompt).send();
+async function ask(system: string, prompt: string): Promise<Reply> {
+  return openChat(system, prompt).send();
 }
 
 async function retried<T>(job: () => Promise<T>): Promise<T> {
@@ -236,6 +303,8 @@ function blank(): Loop {
     replyTokens: 0,
     promptTokens: null,
     inTokens: 0,
+    reasoning: 0,
+    cached: 0,
     calls: 0,
     ms: 0,
   };
@@ -246,9 +315,26 @@ function track(loop: Loop, reply: Reply): void {
   loop.inTokens += reply.promptTokens ?? 0;
   loop.calls += 1;
   loop.outTokens += reply.completionTokens ?? 0;
+  loop.reasoning += reply.reasoningTokens ?? 0;
+  loop.cached += reply.cachedTokens ?? 0;
   loop.replyBytes += Buffer.byteLength(stripFence(reply.content));
   loop.replyTokens += lexicalTokens(stripFence(reply.content));
   loop.ms += reply.ms;
+}
+
+// Tool calls are visible output too: their bytes as sent, and the lexical tokens of the values the model wrote,
+// so an edit's expr or a replace's old and new count like a text answer would.
+function trackCalls(loop: Loop, calls: readonly Call[]): void {
+  for (const call of calls) {
+    loop.replyBytes += Buffer.byteLength(call.arguments);
+    let values: unknown[] = [];
+    try {
+      values = Object.values(JSON.parse(call.arguments || "{}") as Record<string, unknown>);
+    } catch {
+      values = [call.arguments];
+    }
+    loop.replyTokens += lexicalTokens(values.filter((value) => typeof value === "string" || typeof value === "number").join(" "));
+  }
 }
 
 async function nodastLoop(goal: string, oracle: Oracle, program?: string, layout?: Layout): Promise<Loop> {
@@ -258,8 +344,8 @@ async function nodastLoop(goal: string, oracle: Oracle, program?: string, layout
   const result = await run(
     program === undefined ? { goal } : { goal, program },
     {
-      async complete(prompt: string) {
-        const reply = await ask(prompt);
+      async complete(prompt: string, system?: string) {
+        const reply = await ask(system ?? "", prompt);
         track(loop, reply);
         lastReply = reply.content;
         replies.push(reply.content);
@@ -292,7 +378,7 @@ const INLINE_NODES = Number(process.env.BENCH_INLINE_NODES || 256);
 const TOOLS: ToolSpec[] = [
   {
     name: "find",
-    description: "Find nodes by exact text, like 70050 or (add v4 70005), by kind, like let or add, or by name. Returns id, parent and a short view.",
+    description: "Find nodes by exact text, like 70050 or (add v4 70005), by kind, like let or add, or by name. Returns each match with its id, inside its parent.",
     parameters: {
       type: "object",
       properties: { text: { type: "string" }, kind: { type: "string" }, name: { type: "string" } },
@@ -306,7 +392,7 @@ const TOOLS: ToolSpec[] = [
   {
     name: "edit",
     description:
-      "Replace node id with expr, written without ids. op insert puts expr at index among the arguments of call id; op delete removes call argument id. op rename gives the binding at id, a let or a use of it, the new name in name, with every use that refers to it. op param adds a parameter called name to the let-bound fn at id, at index or last, and passes expr at every call of it. The checker runs first; a rejected edit changes nothing. Set done when this completes the goal.",
+      "Replace node id with expr, written without ids. op insert puts expr at index among the arguments of call id; op delete removes call argument id. op rename gives the binding at id, a let or a use of it, the new name in name, with every use that refers to it. op param adds a parameter called name to the let-bound fn at id, at index or last, and passes expr at every call of it. Instead of id, text can name the node by its exact text, like 70050 or (add v4 70005), when only one node matches. The checker runs first; a rejected edit changes nothing. Set done when this completes the goal.",
     parameters: {
       type: "object",
       properties: {
@@ -316,8 +402,8 @@ const TOOLS: ToolSpec[] = [
         name: { type: "string" },
         index: { type: "integer" },
         done: { type: "boolean" },
+        text: { type: "string" },
       },
-      required: ["id"],
     },
   },
 ];
@@ -348,6 +434,10 @@ function callTool(session: Session, call: Call): ToolResult {
       return { text: show(session, str("id") ?? "", depth), edit: null, done: false };
     }
     case "edit": {
+      // An edit that only sets done closes the session, for a model that made its last change without done.
+      if (args.done === true && str("expr") === undefined && str("name") === undefined && str("text") === undefined && str("op") !== "delete") {
+        return { text: "ok, done", edit: null, done: true };
+      }
       const input: Change = { id: str("id") ?? "" };
       const op = str("op");
       const expr = str("expr");
@@ -356,6 +446,8 @@ function callTool(session: Session, call: Call): ToolResult {
       if (expr !== undefined) input.expr = expr;
       if (name !== undefined) input.name = name;
       if (typeof args.index === "number") input.index = Math.floor(args.index);
+      const at = str("text");
+      if (at !== undefined) input.text = at;
       const reply = change(session, input);
       const ok = reply.startsWith("ok");
       return { text: reply, edit: ok ? "ok" : "rejected", done: ok && args.done === true };
@@ -371,17 +463,15 @@ async function toolLoop(goal: string, oracle: Oracle, source: string): Promise<L
   if (!opened.ok) throw new Error(opened.error);
   const session = opened.session;
   const whole = view(session, INLINE_NODES);
-  const prompt = [
-    `A Nodast program is loaded: ${opened.summary}. Forms: (let name value body) (fn (a b) body) (if c then else) (f args) and add sub mul div eq lt gt lte gte, each (op a b).`,
+  const system = [
+    "A Nodast program is loaded. Forms: (let name value body) (fn (a b) body) (if c then else) (f args) and add sub mul div eq lt gt lte gte, each (op a b).",
     whole === undefined
-      ? "Each node has an id, like n4:(add n5:v0 n6:7). You cannot see the program; use find, then edit."
-      : "Each node has an id, like n4:(add n5:v0 n6:7). The program is below.",
-    "Only the edit tool changes it. Set done on the edit that completes the goal.",
-    ...(whole === undefined ? [] : ["", `program:\n${whole}`]),
-    "",
-    `goal: ${goal}`,
+      ? "Each node has an id, like n4:(add n5:v0 n6:7). You cannot see the program: find shows each match inside its parent, with ids, so you can edit right after it."
+      : "Each node has an id, like n4:(add n5:v0 n6:7). The program is in the user message with its current ids: edit it directly, without find or show.",
+    "Only the edit tool changes it. Set done on the edit that completes the goal. An ok edit reply shows the change: no need to check it again.",
   ].join("\n");
-  const chat = openChat(prompt, TOOLS);
+  const prompt = [`program: ${opened.summary}`, ...(whole === undefined ? [] : [whole]), "", `goal: ${goal}`].join("\n");
+  const chat = openChat(system, prompt, TOOLS);
   let edits = 0;
   let finished = false;
   for (let turn = 1; turn <= MAX_TURNS && !finished; turn += 1) {
@@ -394,20 +484,21 @@ async function toolLoop(goal: string, oracle: Oracle, source: string): Promise<L
       return loop;
     }
     track(loop, reply);
-    loop.replyBytes += reply.calls.reduce((sum, call) => sum + Buffer.byteLength(call.arguments), 0);
+    trackCalls(loop, reply.calls);
     if (reply.calls.length === 0) break;
     for (const call of reply.calls) {
       const result = callTool(session, call);
       if (result.edit !== null) {
         edits += 1;
         if (edits === 1) loop.pass1 = result.edit === "ok";
+        // Attempts are the edit calls up to the first one accepted, like the replies of the other loops.
+        if (!loop.valid) loop.attempts = edits;
         if (result.edit === "ok") loop.valid = true;
       }
       if (result.done) finished = true;
       chat.answer(call, result.text);
     }
   }
-  loop.attempts = edits;
   log({ side: "tools", goal, messages: chat.transcript() });
   if (!loop.valid) {
     loop.error = edits === 0 ? "no-edit" : "rejected";
@@ -481,6 +572,8 @@ function callTextTool(file: { text: string }, call: Call): ToolResult {
       return { text: slice.length === 0 ? "past the end" : numbered(slice, start), edit: null, done: false };
     }
     case "replace": {
+      // A replace that only sets done closes the session, as edit does on the Nodast side.
+      if (args.done === true && str("old") === "" && str("new") === "") return { text: "ok, done", edit: null, done: true };
       const old = str("old");
       const fresh = str("new");
       if (old === "") return { text: "rejected: empty old", edit: "rejected", done: false };
@@ -510,17 +603,15 @@ async function textToolLoop(goal: string, oracle: Oracle, source: string, inline
   const loop = blank();
   const file = { text: source };
   const total = source.split("\n").length;
-  const prompt = [
+  const system = [
     "A TypeScript file is loaded. Keep the last statement as the expression whose value is the result.",
     inline
-      ? `It has ${total} lines and is shown below; grep and read also work on it.`
-      : `It has ${total} lines. You cannot see it; use grep and read to locate code, then replace to change it.`,
-    "Only the replace tool changes the file; a change written as text does nothing. Call replace with done set to true when it completes the goal.",
-    ...(inline ? ["", `file:\n${source}`] : []),
-    "",
-    `goal: ${goal}`,
+      ? "The file is in the user message: edit it directly, without grep or read."
+      : "You cannot see the file: grep shows each matching line with its number, so you can replace right after it.",
+    "Only the replace tool changes the file; a change written as text does nothing. Call replace with done set to true when it completes the goal. An ok replace reply shows the change: no need to check it again.",
   ].join("\n");
-  const chat = openChat(prompt, TEXT_TOOLS);
+  const prompt = [`file: ${total} lines`, ...(inline ? [source] : []), "", `goal: ${goal}`].join("\n");
+  const chat = openChat(system, prompt, TEXT_TOOLS);
   let edits = 0;
   let finished = false;
   for (let turn = 1; turn <= MAX_TURNS && !finished; turn += 1) {
@@ -533,20 +624,21 @@ async function textToolLoop(goal: string, oracle: Oracle, source: string, inline
       return loop;
     }
     track(loop, reply);
-    loop.replyBytes += reply.calls.reduce((sum, call) => sum + Buffer.byteLength(call.arguments), 0);
+    trackCalls(loop, reply.calls);
     if (reply.calls.length === 0) break;
     for (const call of reply.calls) {
       const result = callTextTool(file, call);
       if (result.edit !== null) {
         edits += 1;
         if (edits === 1) loop.pass1 = result.edit === "ok";
+        // Attempts are the edit calls up to the first one accepted, like the replies of the other loops.
+        if (!loop.valid) loop.attempts = edits;
         if (result.edit === "ok") loop.valid = true;
       }
       if (result.done) finished = true;
       chat.answer(call, result.text);
     }
   }
-  loop.attempts = edits;
   log({ side: "text-tools", goal, messages: chat.transcript() });
   loop.valid = edits > 0 && plainVerdict(file.text).ok;
   if (!loop.valid) {
@@ -559,14 +651,14 @@ async function textToolLoop(goal: string, oracle: Oracle, source: string, inline
   return loop;
 }
 
-async function plainLoop(prompt: (rejections: string) => string, oracle: Oracle): Promise<Loop> {
+async function plainLoop(system: string, prompt: (rejections: string) => string, oracle: Oracle): Promise<Loop> {
   const loop = blank();
   let rejections = "";
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     loop.attempts = attempt;
     let reply: Reply;
     try {
-      reply = await ask(prompt(rejections));
+      reply = await ask(system, prompt(rejections));
     } catch {
       loop.infra = true;
       loop.error = "model-error";
@@ -591,14 +683,18 @@ async function plainLoop(prompt: (rejections: string) => string, oracle: Oracle)
 const RESULT_RULE =
   "The last statement must be an expression whose value is the result; when the goal asks for a function, the last statement is the function value itself, like ((n: number) => n * 2);. No console output.";
 
+const PLAIN_WRITE = `Write TypeScript that does the goal the user gives. Reply with only TypeScript that can be executed. No prose.\n${RESULT_RULE}`;
+
+const PLAIN_EDIT =
+  "Edit the TypeScript file the user gives so it does the goal. Reply with only the full TypeScript file after the change. No prose.\nKeep the last statement as the expression whose value is the result.";
+
 function plainWritePrompt(goal: string): (rejections: string) => string {
-  return (rejections) =>
-    `Reply with only TypeScript that can be executed. No prose.\n${RESULT_RULE}\n\ngoal: ${goal}\n${rejections}${rejections === "" ? "" : "\nReply again with a corrected answer.\n"}`;
+  return (rejections) => `goal: ${goal}\n${rejections}${rejections === "" ? "" : "\nReply again with a corrected answer.\n"}`;
 }
 
 function plainEditPrompt(goal: string, file: string): (rejections: string) => string {
   return (rejections) =>
-    `Reply with only the full TypeScript file after the change. No prose.\nKeep the last statement as the expression whose value is the result.\n\ngoal: ${goal}\n\nfile:\n${file}${rejections}${rejections === "" ? "" : "\nReply again with a corrected answer.\n"}`;
+    `goal: ${goal}\n\nfile:\n${file}${rejections}${rejections === "" ? "" : "\nReply again with a corrected answer.\n"}`;
 }
 
 async function pool<T>(jobs: Array<() => Promise<T>>, limit: number): Promise<T[]> {
@@ -632,9 +728,10 @@ function push(groups: Group[], index: number, side: string, loop: Loop): void {
 async function writeBench(): Promise<Group[]> {
   const jobs: Array<() => Promise<{ index: number; side: string; loop: Loop }>> = [];
   GOALS.forEach((item, index) => {
+    if (GOAL_PICK.length > 0 && !GOAL_PICK.includes(index)) return;
     for (let r = 0; r < RUNS; r += 1) {
-      jobs.push(async () => ({ index, side: "Nodast", loop: await nodastLoop(item.goal, item.oracle) }));
-      jobs.push(async () => ({ index, side: "Texto plano", loop: await plainLoop(plainWritePrompt(item.goal), item.oracle) }));
+      if (wanted("Nodast")) jobs.push(async () => ({ index, side: "Nodast", loop: await nodastLoop(item.goal, item.oracle) }));
+      if (wanted("Texto plano")) jobs.push(async () => ({ index, side: "Texto plano", loop: await plainLoop(PLAIN_WRITE, plainWritePrompt(item.goal), item.oracle) }));
     }
   });
   const groups: Group[] = GOALS.map(() => new Map());
@@ -660,11 +757,11 @@ async function editBench(source: string, tasks: readonly Goal[]): Promise<Group[
   tasks.forEach((task, index) => {
     const oracle = task.oracle;
     for (let r = 0; r < RUNS; r += 1) {
-      jobs.push(async () => ({ index, side: EDIT_SIDES[0], loop: await toolLoop(task.goal, oracle, source) }));
-      jobs.push(async () => ({ index, side: EDIT_SIDES[1], loop: await nodastLoop(task.goal, oracle, source, "lines") }));
-      jobs.push(async () => ({ index, side: EDIT_SIDES[2], loop: await nodastLoop(task.goal, oracle, source, "inline") }));
-      jobs.push(async () => ({ index, side: EDIT_SIDES[3], loop: await textToolLoop(task.goal, oracle, file, inline) }));
-      jobs.push(async () => ({ index, side: EDIT_SIDES[4], loop: await plainLoop(plainEditPrompt(task.goal, file), oracle) }));
+      if (wanted(EDIT_SIDES[0])) jobs.push(async () => ({ index, side: EDIT_SIDES[0], loop: await toolLoop(task.goal, oracle, source) }));
+      if (wanted(EDIT_SIDES[1])) jobs.push(async () => ({ index, side: EDIT_SIDES[1], loop: await nodastLoop(task.goal, oracle, source, "lines") }));
+      if (wanted(EDIT_SIDES[2])) jobs.push(async () => ({ index, side: EDIT_SIDES[2], loop: await nodastLoop(task.goal, oracle, source, "inline") }));
+      if (wanted(EDIT_SIDES[3])) jobs.push(async () => ({ index, side: EDIT_SIDES[3], loop: await textToolLoop(task.goal, oracle, file, inline) }));
+      if (wanted(EDIT_SIDES[4])) jobs.push(async () => ({ index, side: EDIT_SIDES[4], loop: await plainLoop(PLAIN_EDIT, plainEditPrompt(task.goal, file), oracle) }));
     }
   });
   const groups: Group[] = tasks.map(() => new Map());
@@ -717,16 +814,18 @@ function summary(cols: Column[], withPrompt: boolean): string {
     row("Pass@1, válido al primer intento", (l) => rate(l, (x) => x.pass1)),
     row(`Válido en ≤ ${ATTEMPTS} intentos`, (l) => rate(l, (x) => x.valid)),
     row(`Correcto en ≤ ${ATTEMPTS} intentos (oráculo)`, (l) => rate(l, (x) => x.correct)),
-    row("Intentos medios", (l) => avg(l, (x) => x.attempts, 2)),
+    row("Intentos medios hasta el primero aceptado", (l) => avg(l, (x) => x.attempts, 2)),
     row("`completion_tokens` medios, todos los intentos", (l) => avg(l, (x) => x.outTokens)),
+    row("de ellos, razonamiento", (l) => avg(l, (x) => x.reasoning)),
     ...(withPrompt
       ? [
           row("`prompt_tokens` del primer intento", (l) => avg(l, (x) => x.promptTokens)),
           row("`prompt_tokens` totales, todas las llamadas", (l) => avg(l, (x) => x.inTokens)),
+          row("de ellos, en caché", (l) => avg(l, (x) => x.cached)),
           row("Llamadas al modelo", (l) => avg(l, (x) => x.calls, 1)),
         ]
       : []),
-    row("Respuesta visible, tokens léxicos medios", (l) => avg(l, (x) => x.replyTokens)),
+    row("Respuesta visible, tokens léxicos medios (texto y argumentos de tools)", (l) => avg(l, (x) => x.replyTokens)),
     row("Respuesta visible, bytes medios", (l) => avg(l, (x) => x.replyBytes)),
     row("Latencia media, todos los intentos", (l) => `${avg(l, (x) => x.ms)} ms`),
     row("Fallos de API excluidos", (l) => String(l.filter((x) => x.infra).length)),
@@ -779,7 +878,7 @@ for (const length of RENAME_SIZES) {
   const uses = length - Math.floor(length / 4);
   editSections.push(`### Renombrar en ${length} pasos
 
-\`rate\` aparece en ${uses} usos y \`rate_cap\`, que empieza igual, en ${Math.floor(length / 4)}. Objetivo: llamar \`scale\` a \`rate\` sin tocar \`rate_cap\`. Correcto pide el mismo valor y el mismo archivo que un renombrado bien hecho, sin contar espacios. Nodast con tools tiene \`op rename\`, que sigue los ámbitos; texto con tools tiene \`all\` en \`replace\`; las variantes de ids solo tienen \`replace\`, \`insert\` y \`delete\`.
+\`rate\` aparece en ${uses} usos y \`rate_cap\`, que empieza igual, en ${Math.floor(length / 4)}. Objetivo: llamar \`scale\` a \`rate\` sin tocar \`rate_cap\`. Correcto pide el mismo valor y el mismo archivo que un renombrado bien hecho, sin contar espacios. Nodast con tools tiene \`op rename\` y las variantes de ids \`(rename id name)\`, que siguen los ámbitos; texto con tools tiene \`all\` en \`replace\`.
 
 ${summary(columns(groups, EDIT_SIDES), true)}`);
 }
@@ -793,7 +892,7 @@ for (const length of PARAM_SIZES) {
   const groups = await editBench(steps(length), [paramTask(length)]);
   editSections.push(`### Añadir un parámetro con ${length} llamadas
 
-\`step\` se llama una vez en cada uno de los ${length} pasos. Objetivo: un parámetro nuevo \`scale\` que multiplica su resultado, y 2 en cada llamada. Correcto pide el valor final y que \`step(1, 5)\` dé 20, así que multiplicar por 2 dentro de \`step\` sin parámetro no basta. Nodast con tools tiene \`op param\`, que cambia la función y todas sus llamadas a la vez; texto con tools tiene que tocar cada llamada, porque cada una lleva su argumento.
+\`step\` se llama una vez en cada uno de los ${length} pasos. Objetivo: un parámetro nuevo \`scale\` que multiplica su resultado, y 2 en cada llamada. Correcto pide el valor final y que \`step(1, 5)\` dé 20, así que multiplicar por 2 dentro de \`step\` sin parámetro no basta. Nodast con tools tiene \`op param\` y las variantes de ids \`(param id name index expr)\`, que cambian la función y todas sus llamadas a la vez; texto con tools tiene que tocar cada llamada, porque cada una lleva su argumento.
 
 ${summary(columns(groups, EDIT_SIDES), true)}`);
 }
@@ -818,6 +917,8 @@ const markdown = `# Medición
 Una pasada el ${new Date().toISOString().slice(0, 10)} con ${MODEL} (${SETUP.label}), ${PROVIDER === "minimax" ? `temperatura ${TEMPERATURE}` : "sin temperatura, que el modelo no acepta"}, razonamiento \`low\`, ${RUNS} repeticiones por objetivo y tope de ${ATTEMPTS} intentos. \`pnpm bench\` la repite con OpenAI por la API Responses y escribe en \`bench/openai.md\`; con \`BENCH_PROVIDER=minimax\` va a MiniMax por chat completions y escribe en \`bench/minimax.md\`. Los dos rehacen después las tablas del resumen en \`BENCH.md\`. \`BENCH_RUNS\`, \`BENCH_SIZES\`, \`BENCH_RENAME\`, \`BENCH_PARAM\`, \`BENCH_CONCURRENCY\`, \`BENCH_TEMPERATURE\` y \`BENCH_OUT\` la ajustan. La velocidad interna del motor está aparte, en [bench/engine.md](${relative(dirname(resolve(OUT)), resolve("bench/engine.md")).split(sep).join("/")}).
 
 Válido: Nodast parsea y pasa \`check\`; el texto plano sale de \`tsc\` sin error y corre. Correcto: además, el valor de la última expresión coincide con el oráculo del objetivo, o la función que devuelve da lo esperado con varias entradas. Los dos lados reintentan solo por errores estructurales; el oráculo no se le enseña al modelo.
+
+Cada variante manda sus instrucciones fijas como mensaje de sistema y la tarea (objetivo, programa o archivo) como mensaje de usuario, igual en Nodast y en TypeScript. Una respuesta cortada dentro de \`<think>\` cuenta como intento fallido, no como fallo de API. Los intentos son las respuestas, o en tools las llamadas que editan, hasta la primera aceptada. La respuesta visible cuenta el texto y los valores de los argumentos de las tools.
 
 Si el modelo mete un bloque \`<think>\` en el texto, como hace MiniMax, se quita antes de juzgar. Un fallo de API, tras ${API_TRIES} reintentos de red, no cuenta como fallo del formato: se excluye y se informa aparte. \`completion_tokens\` incluye el razonamiento del modelo; la respuesta visible se cuenta aparte con el contador léxico.
 
