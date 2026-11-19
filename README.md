@@ -32,7 +32,7 @@ every edit is checked before it exists as text, and a deterministic printer writ
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/demo.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/demo-light.svg">
-    <img src="docs/demo.svg" alt="A Nodast tool session: a scoped rename that leaves rate_cap alone, a parameter added at every call, and an edit the checker refuses" width="670">
+    <img src="docs/demo.svg" alt="A Nodast tool session: a scoped rename that leaves rate_cap alone, a parameter added at every call, and an edit the checker refuses" width="780">
   </picture>
   <br>
   <sub>Recorded from <code>pnpm demo</code>. It runs offline: no model, no API key.</sub>

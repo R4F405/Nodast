@@ -47,7 +47,7 @@ test("wraps bare operations and explains the expected shape", () => {
   assert.equal(edit(s, "(replace n10 7)"), "ok, type number, now n8:(sub n9:v1 n12:7)");
   assert.equal(
     edit(s, " (replace n6 1) (replace n2 0)"),
-    "ok, type number, now n4:(add n5:v0 n13:1) n1:(let v0 n14:0 n3:(let v1 n4:... n7:...))",
+    "ok, type number, now n4:(add n5:v0 n13:1) n1:(let v0 n14:0 n3:(let v1 n4:(add n5:v0 n13:1) n7:(let v2 n8:... n11:v2)))",
   );
   assert.equal(printed(s), "const v0 = 0;\nconst v1 = v0 + 1;\nconst v2 = v1 - 7;\nv2;\n");
   assert.equal(edit(s, "[replace n2 1]"), "rejected: expected-edits, write one list like (edits (replace n4 7))");

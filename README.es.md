@@ -32,7 +32,7 @@ cada edición se comprueba antes de existir como texto y un printer determinista
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/demo.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/demo-light.svg">
-    <img src="docs/demo.svg" alt="Una sesión de tools de Nodast: un renombrado que respeta los ámbitos y deja rate_cap igual, un parámetro añadido en cada llamada y una edición que el checker rechaza" width="670">
+    <img src="docs/demo.svg" alt="Una sesión de tools de Nodast: un renombrado que respeta los ámbitos y deja rate_cap igual, un parámetro añadido en cada llamada y una edición que el checker rechaza" width="780">
   </picture>
   <br>
   <sub>Grabada con <code>pnpm demo</code>. Corre sin red: sin modelo y sin clave de API.</sub>

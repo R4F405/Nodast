@@ -20,6 +20,9 @@ const KIND_ALIASES: Record<string, string> = { number: "num", boolean: "bool", v
 const DEFAULT_LIMIT = 10;
 const SHOW_DEPTH = 2;
 const MAX_SPOTS = 3;
+// An ok edit shows each changed spot two levels deep, so a replaced fn body or let value reads whole and the
+// model has no reason to call show to check it.
+const SPOT_DEPTH = 2;
 
 export function open(source: string): { ok: true; session: Session; summary: string } | { ok: false; error: string } {
   const parsed = parse(source);
@@ -90,7 +93,7 @@ export function edit(session: Session, text: string): string {
   remember(session);
   const views = around.flatMap((id) => {
     const found = locate(session.tree, id);
-    return found === undefined ? [] : [compact(found, { ids: true, depth: 1 })];
+    return found === undefined ? [] : [compact(found, { ids: true, depth: SPOT_DEPTH })];
   });
   return views.length === 0 ? `ok, type ${applied.type}` : `ok, type ${applied.type}, now ${views.join(" ")}`;
 }
