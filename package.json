@@ -2,9 +2,31 @@
   "name": "nodast",
   "version": "0.0.0",
   "private": true,
-  "description": "The model proposes nodes. A printer writes the code.",
+  "description": "The model proposes nodes. A printer writes the code. A compact AST format for LLM code edits, checked before it becomes TypeScript.",
+  "keywords": [
+    "llm",
+    "ai-agents",
+    "ast",
+    "code-generation",
+    "code-editing",
+    "structured-editing",
+    "s-expression",
+    "type-inference",
+    "hindley-milner",
+    "typescript",
+    "rust"
+  ],
+  "homepage": "https://github.com/R4F405/Nodast#readme",
+  "bugs": {
+    "url": "https://github.com/R4F405/Nodast/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/R4F405/Nodast.git"
+  },
   "type": "module",
   "license": "MIT",
+  "author": "Rafa San Pablo González (https://github.com/R4F405)",
   "packageManager": "pnpm@11.5.0",
   "engines": {
     "node": ">=22.18"
