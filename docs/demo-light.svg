@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="670" height="672" viewBox="0 0 670 672" role="img" aria-labelledby="title">
+  <title id="title">Nodast tool session: a scoped rename, a parameter added at every call, and an edit the checker refuses</title>
+  <style>
+    text { font: 14px ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; white-space: pre; }
+    .row { animation: show 0.25s ease-out backwards; }
+    @keyframes show { from { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .row { animation: none; } }
+    .bar { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <rect x="0.5" y="0.5" width="669" height="671" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <path d="M0.5 36 V8.5 A8 8 0 0 1 8.5 0.5 H661.5 A8 8 0 0 1 669.5 8.5 V36 Z" fill="#f6f8fa" stroke="#d0d7de"/>
+  <circle cx="20" cy="18" r="6" fill="#ff5f56"/>
+  <circle cx="40" cy="18" r="6" fill="#ffbd2e"/>
+  <circle cx="60" cy="18" r="6" fill="#27c93f"/>
+  <text class="bar" x="335" y="22" fill="#57606a" text-anchor="middle">nodast: offline tool session, no model, no key</text>
+  <text x="20" y="67" fill="#1f2328" class="row" style="animation-delay:0.00s">$ pnpm demo</text>
+  <text x="20" y="87" fill="#6e7781" class="row" style="animation-delay:0.30s"># A program, as TypeScript</text>
+  <text x="20" y="107" fill="#1f2328" class="row" style="animation-delay:0.60s">const rate = 3;</text>
+  <text x="20" y="127" fill="#1f2328" class="row" style="animation-delay:0.90s">const rate_cap = 7;</text>
+  <text x="20" y="147" fill="#1f2328" class="row" style="animation-delay:1.20s">const step = (x) =&gt; x + rate;</text>
+  <text x="20" y="167" fill="#1f2328" class="row" style="animation-delay:1.50s">const a = step(1) + rate;</text>
+  <text x="20" y="187" fill="#1f2328" class="row" style="animation-delay:1.80s">const b = step(rate_cap);</text>
+  <text x="20" y="207" fill="#1f2328" class="row" style="animation-delay:2.10s">a * b;</text>
+  <text x="20" y="227" fill="#1f2328" class="row" style="animation-delay:2.40s"> </text>
+  <text x="20" y="247" fill="#6e7781" class="row" style="animation-delay:2.70s"># Goal: rename rate to scale. rate_cap must not change.</text>
+  <text x="20" y="267" fill="#0969da" class="row" style="animation-delay:3.00s">&gt; edit {op: "rename", id: "n1", name: "scale"}</text>
+  <text x="20" y="287" fill="#1a7f37" class="row" style="animation-delay:3.30s">  ok, type number, renamed rate to scale and 2 uses</text>
+  <text x="20" y="307" fill="#1f2328" class="row" style="animation-delay:3.60s"> </text>
+  <text x="20" y="327" fill="#6e7781" class="row" style="animation-delay:3.90s"># Goal: give step a parameter bonus, pass 10 at every call.</text>
+  <text x="20" y="347" fill="#0969da" class="row" style="animation-delay:4.20s">&gt; edit {op: "param", id: "n5", name: "bonus", expr: "10"}</text>
+  <text x="20" y="367" fill="#1a7f37" class="row" style="animation-delay:4.50s">  ok, type number, step takes (x bonus), updated 2 calls</text>
+  <text x="20" y="387" fill="#0969da" class="row" style="animation-delay:4.80s">&gt; edit {id: "n7", expr: "(add (add x scale) bonus)"}</text>
+  <text x="20" y="407" fill="#1a7f37" class="row" style="animation-delay:5.10s">  ok, type number, now n6:(fn (x bonus) n25:(add n26:... n29:bonus))</text>
+  <text x="20" y="427" fill="#1f2328" class="row" style="animation-delay:5.40s"> </text>
+  <text x="20" y="447" fill="#6e7781" class="row" style="animation-delay:5.70s"># A mistake is refused before it reaches the file</text>
+  <text x="20" y="467" fill="#0969da" class="row" style="animation-delay:6.00s">&gt; edit {id: "n25", expr: "(add x true)"}</text>
+  <text x="20" y="487" fill="#cf222e" class="row" style="animation-delay:6.30s">  rejected: type-mismatch n30 expected number actual bool in (add x true)</text>
+  <text x="20" y="507" fill="#1f2328" class="row" style="animation-delay:6.60s"> </text>
+  <text x="20" y="527" fill="#6e7781" class="row" style="animation-delay:6.90s"># The same program, printed again</text>
+  <rect x="12" y="532" width="646" height="20" rx="3" fill="rgba(26,127,55,0.12)" class="row" style="animation-delay:7.20s"/>
+  <text x="20" y="547" fill="#1f2328" class="row" style="animation-delay:7.20s">const scale = 3;</text>
+  <text x="20" y="567" fill="#1f2328" class="row" style="animation-delay:7.50s">const rate_cap = 7;</text>
+  <rect x="12" y="572" width="646" height="20" rx="3" fill="rgba(26,127,55,0.12)" class="row" style="animation-delay:7.80s"/>
+  <text x="20" y="587" fill="#1f2328" class="row" style="animation-delay:7.80s">const step = (x, bonus) =&gt; x + scale + bonus;</text>
+  <rect x="12" y="592" width="646" height="20" rx="3" fill="rgba(26,127,55,0.12)" class="row" style="animation-delay:8.10s"/>
+  <text x="20" y="607" fill="#1f2328" class="row" style="animation-delay:8.10s">const a = step(1, 10) + scale;</text>
+  <rect x="12" y="612" width="646" height="20" rx="3" fill="rgba(26,127,55,0.12)" class="row" style="animation-delay:8.40s"/>
+  <text x="20" y="627" fill="#1f2328" class="row" style="animation-delay:8.40s">const b = step(rate_cap, 10);</text>
+  <text x="20" y="647" fill="#1f2328" class="row" style="animation-delay:8.70s">a * b;</text>
+</svg>
