@@ -1,148 +1,91 @@
 # Medición
 
-Una pasada el 2026-11-05 con gpt-6.1-sol (OpenAI), sin temperatura, que el modelo no acepta, razonamiento `low`, 5 repeticiones por objetivo y tope de 3 intentos. `pnpm bench` la repite con OpenAI por la API Responses y escribe en `BENCH.md`; con `BENCH_PROVIDER=minimax` va a MiniMax por chat completions y escribe en `bench/minimax.md`. `BENCH_RUNS`, `BENCH_SIZES`, `BENCH_CONCURRENCY`, `BENCH_TEMPERATURE` y `BENCH_OUT` la ajustan. La velocidad interna del motor está aparte, en [bench/engine.md](bench/engine.md).
+Resumen de las pasadas del bench con OpenAI y con MiniMax. El modelo escribe programas pequeños desde cero y edita un archivo existente: cambia una constante o una suma en una cadena de 50 y de 500 `let`, y renombra `rate` a `scale` junto a `rate_cap` en 40 y en 400 pasos. Cada edición se hace de tres formas: Nodast con sus tools `find`, `show` y `edit`; un agente de texto sobre el mismo TypeScript, con `grep`, `read` y `replace`, como los agentes de código de hoy; y texto plano, donde el modelo devuelve el archivo entero. Escribir desde cero no usa tools: Nodast escribe el árbol compacto y el texto plano escribe TypeScript. Las tareas son sintéticas y aíslan un tipo de edición cada una.
 
-Válido: Nodast parsea y pasa `check`; el texto plano sale de `tsc` sin error y corre. Correcto: además, el valor de la última expresión coincide con el oráculo del objetivo, o la función que devuelve da lo esperado con varias entradas. Los dos lados reintentan solo por errores estructurales; el oráculo no se le enseña al modelo.
+Los informes completos, con las variantes de ids sin tools, todas las métricas y cada objetivo, están en [bench/openai.md](bench/openai.md) y [bench/minimax.md](bench/minimax.md). La velocidad del motor, sin modelo, está en [bench/engine.md](bench/engine.md).
 
-Si el modelo mete un bloque `<think>` en el texto, como hace MiniMax, se quita antes de juzgar. Un fallo de API, tras 5 reintentos de red, no cuenta como fallo del formato: se excluye y se informa aparte. `completion_tokens` incluye el razonamiento del modelo; la respuesta visible se cuenta aparte con el contador léxico.
+Pass@1: válido al primer intento. Correcto: el oráculo acepta el resultado en ≤ 3 intentos. `completion_tokens`, `prompt_tokens` y latencia son medias por tarea, con todas las llamadas; `completion_tokens` incluye el razonamiento del modelo. "Sin medir" quiere decir que esa pasada no tenía la variante o la tarea.
+
+Las tablas, entre los dos comentarios, las rehace `pnpm bench:summary` a partir de los dos informes; `pnpm bench` lo hace al terminar. Las conclusiones están escritas a mano y hay que revisarlas después de cada pasada.
+
+<!-- tablas: las rehace pnpm bench:summary -->
+
+Pasadas:
+
+- OpenAI, `gpt-6.1-sol`, el 2026-11-05, 5 repeticiones: [bench/openai.md](bench/openai.md).
+- MiniMax, `MiniMax-M3`, el 2026-11-05, 5 repeticiones: [bench/minimax.md](bench/minimax.md). Sin medir en esta pasada: Texto, tools; Renombrar en 40 pasos; Renombrar en 400 pasos.
 
 ## Escribir desde cero
 
-12 objetivos × 5 repeticiones.
-
-|  | Nodast | Texto plano |
-| --- | ---: | ---: |
-| Pass@1, válido al primer intento | 60/60 (100%) | 60/60 (100%) |
-| Válido en ≤ 3 intentos | 60/60 (100%) | 60/60 (100%) |
-| Correcto en ≤ 3 intentos (oráculo) | 60/60 (100%) | 60/60 (100%) |
-| Intentos medios | 1.00 | 1.00 |
-| `completion_tokens` medios, todos los intentos | 23 | 25 |
-| Respuesta visible, tokens léxicos medios | 19 | 21 |
-| Respuesta visible, bytes medios | 34 | 45 |
-| Latencia media, todos los intentos | 1931 ms | 2116 ms |
-| Fallos de API excluidos | 0 | 0 |
-| Fallos | — | — |
-
-| Objetivo | Correcto, Nodast | Correcto, Texto plano |
-| --- | ---: | ---: |
-| bind the sum of 1 and 2 | 5/5 (100%) | 5/5 (100%) |
-| define a function that adds 1 to its number argument | 5/5 (100%) | 5/5 (100%) |
-| bind x to 1, then return 0 when x is less than 0, otherwise x | 5/5 (100%) | 5/5 (100%) |
-| multiply 3 by 4 | 5/5 (100%) | 5/5 (100%) |
-| define a function of two numbers that returns whether the first is less than the second | 5/5 (100%) | 5/5 (100%) |
-| define a function that returns the larger of its two number arguments | 5/5 (100%) | 5/5 (100%) |
-| compute the absolute value of -7 with a conditional | 5/5 (100%) | 5/5 (100%) |
-| define a function that returns 1 when its number argument is zero and 0 otherwise | 5/5 (100%) | 5/5 (100%) |
-| define a function that clamps its number argument between 0 and 10 | 5/5 (100%) | 5/5 (100%) |
-| define a function of three numbers that returns the middle one by value | 5/5 (100%) | 5/5 (100%) |
-| bind double to a function that doubles a number and inc to one that adds 1, then return inc applied to double applied to 5 | 5/5 (100%) | 5/5 (100%) |
-| define a function that takes a function f and returns f applied to 5 | 5/5 (100%) | 5/5 (100%) |
+| Proveedor | Variante | Pass@1 | Correcto | `completion_tokens` | Latencia |
+| --- | --- | ---: | ---: | ---: | ---: |
+| OpenAI | Nodast | 60/60 (100%) | 60/60 (100%) | 23 | 1931 ms |
+| OpenAI | Texto plano | 60/60 (100%) | 60/60 (100%) | 25 | 2116 ms |
+| MiniMax | Nodast | 54/60 (90%) | 60/60 (100%) | 827 | 8542 ms |
+| MiniMax | Texto plano | 60/60 (100%) | 60/60 (100%) | 203 | 1928 ms |
 
 ## Editar un archivo existente
 
-Una cadena de `let` donde cada paso suma o resta una constante. Nodast sin tools recibe el árbol con un id delante de cada nodo y devuelve `(edits ...)`; se prueba con cada `let` en su línea y con todo en una. La variante con tools usa `find`, `show` y `edit` por function calling, hasta 10 llamadas; sus intentos son llamadas a `edit`, que recibe `id`, `expr` y `op` como campos sueltos. Su prompt resume la gramática en una línea. Con ≤ 256 nodos recibe además el árbol entero con ids; con más, solo un resumen. Un `edit` aceptado con `done` cierra la sesión sin otra llamada. Texto con tools es lo que usa un agente de código sobre un archivo normal: `grep` busca líneas, `read` muestra un rango y `replace` cambia un texto exacto que aparezca una sola vez; como un editor, `replace` se aplica siempre y avisa si el archivo deja de compilar o de correr, y se juzga el archivo final. Recibe el archivo entero en el mismo caso en que Nodast con tools recibe el árbol, con el mismo `done` y el mismo tope de llamadas. El texto plano recibe el TypeScript y devuelve el archivo entero. El oráculo es el valor final del programa ya editado.
-
 ### Cadena de 50 `let`
 
-203 nodos. TypeScript: 1250 bytes. Árbol con ids: 2202 bytes por líneas, 2202 en una línea.
-
-|  | Nodast, tools | Nodast, ids por líneas | Nodast, ids en una línea | Texto, tools | Texto plano |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Pass@1, válido al primer intento | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) |
-| Válido en ≤ 3 intentos | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) |
-| Correcto en ≤ 3 intentos (oráculo) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) |
-| Intentos medios | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
-| `completion_tokens` medios, todos los intentos | 36 | 15 | 15 | 48 | 563 |
-| `prompt_tokens` del primer intento | 1377 | 1331 | 1330 | 822 | 609 |
-| `prompt_tokens` totales, todas las llamadas | 1377 | 1331 | 1330 | 822 | 609 |
-| Llamadas al modelo | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
-| Respuesta visible, tokens léxicos medios | 0 | 9 | 9 | 0 | 357 |
-| Respuesta visible, bytes medios | 65 | 28 | 28 | 87 | 1246 |
-| Latencia media, todos los intentos | 2238 ms | 1831 ms | 1941 ms | 2155 ms | 5029 ms |
-| Fallos de API excluidos | 0 | 0 | 0 | 0 | 0 |
-| Fallos | — | — | — | — | — |
-
-| Objetivo | Correcto, Nodast, tools | Correcto, Nodast, ids por líneas | Correcto, Nodast, ids en una línea | Correcto, Texto, tools | Correcto, Texto plano |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| change the constant 70005 to 7 | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
-| change the constant 70044 to 7 | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
-| in the binding of v25, subtract instead of add | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
+| Proveedor | Variante | Pass@1 | Correcto | `completion_tokens` | `prompt_tokens`, total | Latencia |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| OpenAI | Nodast, tools | 15/15 (100%) | 15/15 (100%) | 36 | 1377 | 2238 ms |
+| OpenAI | Texto, tools | 15/15 (100%) | 15/15 (100%) | 48 | 822 | 2155 ms |
+| OpenAI | Texto plano | 15/15 (100%) | 15/15 (100%) | 563 | 609 | 5029 ms |
+| MiniMax | Nodast, tools | 12/15 (80%) | 15/15 (100%) | 288 | 3941 | 3406 ms |
+| MiniMax | Texto, tools | sin medir | sin medir | sin medir | sin medir | sin medir |
+| MiniMax | Texto plano | 15/15 (100%) | 14/15 (93%) | 642 | 801 | 2570 ms |
 
 ### Cadena de 500 `let`
 
-2003 nodos. TypeScript: 13302 bytes. Árbol con ids: 24708 bytes por líneas, 24708 en una línea.
-
-|  | Nodast, tools | Nodast, ids por líneas | Nodast, ids en una línea | Texto, tools | Texto plano |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Pass@1, válido al primer intento | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) |
-| Válido en ≤ 3 intentos | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) |
-| Correcto en ≤ 3 intentos (oráculo) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) | 15/15 (100%) |
-| Intentos medios | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
-| `completion_tokens` medios, todos los intentos | 61 | 15 | 15 | 67 | 5513 |
-| `prompt_tokens` del primer intento | 355 | 11447 | 11446 | 267 | 5559 |
-| `prompt_tokens` totales, todas las llamadas | 772 | 11447 | 11446 | 581 | 5559 |
-| Llamadas al modelo | 2.0 | 1.0 | 1.0 | 2.0 | 1.0 |
-| Respuesta visible, tokens léxicos medios | 0 | 9 | 9 | 0 | 3507 |
-| Respuesta visible, bytes medios | 103 | 30 | 30 | 107 | 13298 |
-| Latencia media, todos los intentos | 4636 ms | 2058 ms | 1840 ms | 4451 ms | 32773 ms |
-| Fallos de API excluidos | 0 | 0 | 0 | 0 | 0 |
-| Fallos | — | — | — | — | — |
-
-| Objetivo | Correcto, Nodast, tools | Correcto, Nodast, ids por líneas | Correcto, Nodast, ids en una línea | Correcto, Texto, tools | Correcto, Texto plano |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| change the constant 70050 to 7 | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
-| change the constant 70440 to 7 | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
-| in the binding of v251, subtract instead of add | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
+| Proveedor | Variante | Pass@1 | Correcto | `completion_tokens` | `prompt_tokens`, total | Latencia |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| OpenAI | Nodast, tools | 15/15 (100%) | 15/15 (100%) | 61 | 772 | 4636 ms |
+| OpenAI | Texto, tools | 15/15 (100%) | 15/15 (100%) | 67 | 581 | 4451 ms |
+| OpenAI | Texto plano | 15/15 (100%) | 15/15 (100%) | 5513 | 5559 | 32773 ms |
+| MiniMax | Nodast, tools | 12/15 (80%) | 15/15 (100%) | 300 | 3231 | 4346 ms |
+| MiniMax | Texto, tools | sin medir | sin medir | sin medir | sin medir | sin medir |
+| MiniMax | Texto plano | 15/15 (100%) | 15/15 (100%) | 5851 | 5749 | 21573 ms |
 
 ### Renombrar en 40 pasos
 
-`rate` aparece en 30 usos y `rate_cap`, que empieza igual, en 10. Objetivo: llamar `scale` a `rate` sin tocar `rate_cap`. Correcto pide el mismo valor y el mismo archivo que un renombrado bien hecho, sin contar espacios. Nodast con tools tiene `op rename`, que sigue los ámbitos; texto con tools tiene `all` en `replace`; las variantes de ids solo tienen `replace`, `insert` y `delete`.
-
-|  | Nodast, tools | Nodast, ids por líneas | Nodast, ids en una línea | Texto, tools | Texto plano |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Pass@1, válido al primer intento | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 1/5 (20%) | 5/5 (100%) |
-| Válido en ≤ 3 intentos | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
-| Correcto en ≤ 3 intentos (oráculo) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
-| Intentos medios | 1.00 | 1.00 | 1.00 | 2.00 | 1.00 |
-| `completion_tokens` medios, todos los intentos | 34 | 677 | 683 | 68 | 517 |
-| `prompt_tokens` del primer intento | 1489 | 1443 | 1440 | 778 | 565 |
-| `prompt_tokens` totales, todas las llamadas | 1489 | 1443 | 1440 | 1618 | 565 |
-| Llamadas al modelo | 1.0 | 1.0 | 1.0 | 2.0 | 1.0 |
-| Respuesta visible, tokens léxicos medios | 0 | 543 | 543 | 0 | 377 |
-| Respuesta visible, bytes medios | 62 | 1468 | 1468 | 126 | 1257 |
-| Latencia media, todos los intentos | 2161 ms | 7297 ms | 6829 ms | 4699 ms | 4714 ms |
-| Fallos de API excluidos | 0 | 0 | 0 | 0 | 0 |
-| Fallos | — | — | — | — | — |
+| Proveedor | Variante | Pass@1 | Correcto | `completion_tokens` | `prompt_tokens`, total | Latencia |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| OpenAI | Nodast, tools | 5/5 (100%) | 5/5 (100%) | 34 | 1489 | 2161 ms |
+| OpenAI | Texto, tools | 1/5 (20%) | 5/5 (100%) | 68 | 1618 | 4699 ms |
+| OpenAI | Texto plano | 5/5 (100%) | 5/5 (100%) | 517 | 565 | 4714 ms |
+| MiniMax | Nodast, tools | sin medir | sin medir | sin medir | sin medir | sin medir |
+| MiniMax | Texto, tools | sin medir | sin medir | sin medir | sin medir | sin medir |
+| MiniMax | Texto plano | sin medir | sin medir | sin medir | sin medir | sin medir |
 
 ### Renombrar en 400 pasos
 
-`rate` aparece en 300 usos y `rate_cap`, que empieza igual, en 100. Objetivo: llamar `scale` a `rate` sin tocar `rate_cap`. Correcto pide el mismo valor y el mismo archivo que un renombrado bien hecho, sin contar espacios. Nodast con tools tiene `op rename`, que sigue los ámbitos; texto con tools tiene `all` en `replace`; las variantes de ids solo tienen `replace`, `insert` y `delete`.
+| Proveedor | Variante | Pass@1 | Correcto | `completion_tokens` | `prompt_tokens`, total | Latencia |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| OpenAI | Nodast, tools | 5/5 (100%) | 5/5 (100%) | 55 | 907 | 4370 ms |
+| OpenAI | Texto, tools | 5/5 (100%) | 5/5 (100%) | 80 | 1187 | 6742 ms |
+| OpenAI | Texto plano | 5/5 (100%) | 5/5 (100%) | 4927 | 4975 | 29101 ms |
+| MiniMax | Nodast, tools | sin medir | sin medir | sin medir | sin medir | sin medir |
+| MiniMax | Texto, tools | sin medir | sin medir | sin medir | sin medir | sin medir |
+| MiniMax | Texto plano | sin medir | sin medir | sin medir | sin medir | sin medir |
 
-|  | Nodast, tools | Nodast, ids por líneas | Nodast, ids en una línea | Texto, tools | Texto plano |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Pass@1, válido al primer intento | 5/5 (100%) | 5/5 (100%) | 3/5 (60%) | 5/5 (100%) | 5/5 (100%) |
-| Válido en ≤ 3 intentos | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
-| Correcto en ≤ 3 intentos (oráculo) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
-| Intentos medios | 1.00 | 1.00 | 1.40 | 2.00 | 1.00 |
-| `completion_tokens` medios, todos los intentos | 55 | 5641 | 8504 | 80 | 4927 |
-| `prompt_tokens` del primer intento | 358 | 12751 | 12748 | 270 | 4975 |
-| `prompt_tokens` totales, todas las llamadas | 907 | 12751 | 20187 | 1187 | 4975 |
-| Llamadas al modelo | 2.0 | 1.0 | 1.4 | 3.0 | 1.0 |
-| Respuesta visible, tokens léxicos medios | 0 | 5223 | 7314 | 0 | 3617 |
-| Respuesta visible, bytes medios | 97 | 15255 | 21355 | 126 | 13230 |
-| Latencia media, todos los intentos | 4370 ms | 37057 ms | 60165 ms | 6742 ms | 29101 ms |
-| Fallos de API excluidos | 0 | 0 | 0 | 0 | 0 |
-| Fallos | — | — | — | — | — |
+<!-- /tablas -->
 
-## Payload
+## Conclusiones
 
-Tokens léxicos: identificadores, números, operadores y signos, con el mismo contador en los dos textos. El buffer se compara en bytes.
+Con OpenAI, `gpt-6.1-sol`:
 
-| Programa | Compacto, bytes / tokens | Buffer, bytes | TypeScript, bytes / tokens |
-| --- | ---: | ---: | ---: |
-| let y suma | 19 / 10 | 97 | 20 / 9 |
-| función de un argumento | 18 / 11 | 82 | 16 / 10 |
-| if con x ligado | 27 / 15 | 142 | 28 / 13 |
-| cadena de 50 let | 1295 / 456 | 3707 | 1250 / 357 |
-| cadena de 500 let | 13797 / 4506 | 38862 | 13302 / 3507 |
-| suma de 8191 nodos | 32761 / 16381 | 146348 | 20477 / 12286 |
+- Todas las variantes aciertan en todas las tareas. Lo que cambia es el coste y la latencia.
+- Escribir desde cero es un empate: 23 frente a 25 `completion_tokens`, 1.9 s frente a 2.1 s.
+- En una edición local, Nodast con tools no gana al agente de texto con tools. En la cadena de 500 `let` usa 772 `prompt_tokens` y 61 `completion_tokens` frente a 581 y 67, con la misma latencia. El ahorro frente al texto plano, que reescribe el archivo, viene de editar por partes, y el agente de texto también edita por partes.
+- La ventaja frente al agente de texto está en renombrar. `op rename` sigue los ámbitos y lo hace en una edición. En 40 pasos el agente de texto es válido a la primera en 1 de 5 casos, frente a 5 de 5. En 400 pasos Nodast usa 907 `prompt_tokens`, 55 `completion_tokens` y 4.4 s, frente a 1187, 80 y 6.7 s. Los dos aciertan al final.
+- Las variantes de ids sin tools salen caras al renombrar: en 400 pasos gastan 5641 y 8504 `completion_tokens`, más que el texto plano.
+
+Con MiniMax, la pasada en disco usó `MiniMax-M3` y es anterior al agente de texto con tools y a las tareas de renombrar y de añadir un parámetro:
+
+- Escribir desde cero fue peor con Nodast: 54/60 válido a la primera frente a 60/60, 827 `completion_tokens` frente a 203 y 8.5 s frente a 1.9 s. Los dos acertaron 60/60 al final.
+- Al editar, Nodast con tools acertó 15/15 en los dos tamaños, frente a 14/15 y 15/15 del texto plano, pero fue válido a la primera en 12/15, frente a 15/15. En la cadena de 500 usó 300 `completion_tokens` y 4.3 s, frente a 5851 y 21.6 s.
+- Sin el agente de texto con tools todavía no hay comparación justa con MiniMax. La da la pasada nueva, `BENCH_PROVIDER=minimax pnpm bench`.
+
+Añadir un parámetro a una función llamada en 20 y en 200 sitios está en el bench (`BENCH_PARAM`), pero no en ninguno de los dos informes. Con OpenAI se midió en una pasada aparte, con 5 repeticiones: con 200 llamadas, Nodast con tools usó 2182 `prompt_tokens`, 136 `completion_tokens` y 9.1 s, frente a 12045, 174 y 13.7 s del agente de texto y 7432, 5668 y 35 s del texto plano. `op param` cambia la función y todas las llamadas en una edición; el agente de texto tiene que tocar cada llamada. Entrará en las tablas con la próxima pasada de cada proveedor.

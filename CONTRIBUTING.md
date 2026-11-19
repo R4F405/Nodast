@@ -86,7 +86,7 @@ pnpm typecheck
 cargo test --manifest-path rust/Cargo.toml
 ```
 
-`pnpm bench` llama a un modelo de verdad y necesita una clave en `.env`; mira `.env.example`. Ni los tests ni la CI la usan.
+`pnpm bench` llama a un modelo de verdad y necesita una clave en `.env`; mira `.env.example`. Ni los tests ni la CI la usan. Escribe el informe completo en `bench/openai.md` o en `bench/minimax.md` y rehace las tablas de `BENCH.md`; `pnpm bench:summary` las rehace sin llamar al modelo.
 
 ## Licencia
 

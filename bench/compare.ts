@@ -1,4 +1,5 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, relative, resolve, sep } from "node:path";
 import { compact, type Layout } from "../src/compact.ts";
 import { stripThink } from "../src/minimax.ts";
 import { parse } from "../src/parse.ts";
@@ -23,6 +24,7 @@ import {
   stripFence,
   type Oracle,
 } from "./metrics.ts";
+import { summarize } from "./summary.ts";
 
 const ATTEMPTS = 3;
 const API_TRIES = 5;
@@ -80,7 +82,10 @@ const CONCURRENCY = Number(process.env.BENCH_CONCURRENCY || 2);
 // OpenAI reasoning models reject sampling parameters, so temperature only goes to MiniMax.
 const TEMPERATURE = Number(process.env.BENCH_TEMPERATURE || 0.01);
 const LOG = process.env.BENCH_LOG;
-const OUT = process.env.BENCH_OUT || (PROVIDER === "openai" ? "BENCH.md" : `bench/${PROVIDER}.md`);
+// Each provider has its full report in bench/; BENCH.md only summarizes them.
+const DEFAULT_OUT = `bench/${PROVIDER}.md`;
+const OUT = process.env.BENCH_OUT || DEFAULT_OUT;
+const SUMMARY = resolve(OUT) === resolve(DEFAULT_OUT);
 
 function log(entry: Record<string, unknown>): void {
   if (LOG !== undefined && LOG !== "") appendFileSync(LOG, `${JSON.stringify(entry)}\n`);
@@ -131,16 +136,20 @@ function completionsChat(prompt: string, tools?: readonly ToolSpec[]): Chat {
         temperature: TEMPERATURE,
       });
       const body = json as {
-        choices?: { message?: Record<string, unknown> & { content?: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[];
+        choices?: { message?: Record<string, unknown> & { content?: string | null; tool_calls?: { id?: string; function?: { name?: string; arguments?: unknown } }[] } }[];
         usage?: { completion_tokens?: number; prompt_tokens?: number };
       };
       const message = body.choices?.[0]?.message ?? {};
       const content = typeof message.content === "string" ? stripThink(message.content) : "";
-      const calls = (Array.isArray(message.tool_calls) ? message.tool_calls : []).map((call) => ({
-        id: call.id,
-        name: call.function.name,
-        arguments: call.function.arguments,
-      }));
+      // Some OpenAI-compatible servers send arguments as an object instead of a JSON string.
+      const calls = (Array.isArray(message.tool_calls) ? message.tool_calls : []).map((call) => {
+        const args = call.function?.arguments;
+        return {
+          id: call.id ?? "",
+          name: call.function?.name ?? "",
+          arguments: typeof args === "string" ? args : JSON.stringify(args ?? {}),
+        };
+      });
       if (content.trim() === "" && calls.length === 0) throw new InfraError(`${SETUP.label} returned an empty reply`);
       messages.push(message);
       return { content, completionTokens: count(body.usage?.completion_tokens), promptTokens: count(body.usage?.prompt_tokens), ms, calls };
@@ -806,7 +815,7 @@ const WRITE_SIDES = ["Nodast", "Texto plano"] as const;
 
 const markdown = `# Medición
 
-Una pasada el ${new Date().toISOString().slice(0, 10)} con ${MODEL} (${SETUP.label}), ${PROVIDER === "minimax" ? `temperatura ${TEMPERATURE}` : "sin temperatura, que el modelo no acepta"}, razonamiento \`low\`, ${RUNS} repeticiones por objetivo y tope de ${ATTEMPTS} intentos. \`pnpm bench\` la repite con OpenAI por la API Responses y escribe en \`BENCH.md\`; con \`BENCH_PROVIDER=minimax\` va a MiniMax por chat completions y escribe en \`bench/minimax.md\`. \`BENCH_RUNS\`, \`BENCH_SIZES\`, \`BENCH_CONCURRENCY\`, \`BENCH_TEMPERATURE\` y \`BENCH_OUT\` la ajustan. La velocidad interna del motor está aparte, en [bench/engine.md](${OUT.includes("/") ? "engine.md" : "bench/engine.md"}).
+Una pasada el ${new Date().toISOString().slice(0, 10)} con ${MODEL} (${SETUP.label}), ${PROVIDER === "minimax" ? `temperatura ${TEMPERATURE}` : "sin temperatura, que el modelo no acepta"}, razonamiento \`low\`, ${RUNS} repeticiones por objetivo y tope de ${ATTEMPTS} intentos. \`pnpm bench\` la repite con OpenAI por la API Responses y escribe en \`bench/openai.md\`; con \`BENCH_PROVIDER=minimax\` va a MiniMax por chat completions y escribe en \`bench/minimax.md\`. Los dos rehacen después las tablas del resumen en \`BENCH.md\`. \`BENCH_RUNS\`, \`BENCH_SIZES\`, \`BENCH_RENAME\`, \`BENCH_PARAM\`, \`BENCH_CONCURRENCY\`, \`BENCH_TEMPERATURE\` y \`BENCH_OUT\` la ajustan. La velocidad interna del motor está aparte, en [bench/engine.md](${relative(dirname(resolve(OUT)), resolve("bench/engine.md")).split(sep).join("/")}).
 
 Válido: Nodast parsea y pasa \`check\`; el texto plano sale de \`tsc\` sin error y corre. Correcto: además, el valor de la última expresión coincide con el oráculo del objetivo, o la función que devuelve da lo esperado con varias entradas. Los dos lados reintentan solo por errores estructurales; el oráculo no se le enseña al modelo.
 
@@ -837,3 +846,5 @@ ${payloadRows.join("\n")}
 
 writeFileSync(OUT, markdown);
 process.stdout.write(markdown);
+// A report written elsewhere with BENCH_OUT is a trial run and leaves the summary alone.
+if (SUMMARY) summarize();

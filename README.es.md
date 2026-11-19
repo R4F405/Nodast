@@ -17,7 +17,7 @@
 
 ---
 
-**Estado.** PoC cerrado: parser, printer, checker, operaciones, contrato con el modelo, motor en Rust y tools `find`, `show` y `edit` para agentes. Los resultados medidos están en [BENCH.md](BENCH.md), con `gpt-6.1-sol` de OpenAI; los de MiniMax, en [bench/minimax.md](bench/minimax.md).
+**Estado.** PoC cerrado: parser, printer, checker, operaciones, contrato con el modelo, motor en Rust y tools `find`, `show` y `edit` para agentes. El resumen de lo medido está en [BENCH.md](BENCH.md). Los informes completos están en [bench/openai.md](bench/openai.md), con `gpt-6.1-sol` de OpenAI, y en [bench/minimax.md](bench/minimax.md).
 
 Nodast (**Node** + **AST**) es una herramienta open source para generar y modificar código como un árbol, no como un archivo de texto. El modelo devuelve nodos o una operación sobre un nodo. Un checker acepta o rechaza el árbol. Un printer determinista es el único que produce el fuente.
 
@@ -117,7 +117,7 @@ pnpm ask -- "bind the sum of 1 and 2"
 
 `pnpm demo` enseña una sesión de tools sin red. `pnpm ask` lee `.env` y llama a MiniMax. `pnpm test` no.
 
-`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. `cargo test` recorre el motor en Rust. `pnpm bench` mide validez, payload, edición y reintentos contra texto plano y contra un agente de texto con tools, y llama a OpenAI, o a MiniMax con `BENCH_PROVIDER=minimax`. `pnpm bench:engine` mide solo el motor, en local. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
+`pnpm test` recorre parser, printer, checker, operaciones, el bucle del modelo, el binario y la gramática, sin red. `cargo test` recorre el motor en Rust. `pnpm bench` mide validez, payload, edición y reintentos contra texto plano y contra un agente de texto con tools, y llama a OpenAI, o a MiniMax con `BENCH_PROVIDER=minimax`. Escribe en `bench/openai.md` o en `bench/minimax.md` y rehace las tablas de `BENCH.md`. `pnpm bench:engine` mide solo el motor, en local. La forma de participar está en [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licencia
 

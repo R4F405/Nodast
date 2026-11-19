@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "ask": "node --experimental-strip-types --env-file=.env src/ask.ts",
     "bench": "node --experimental-strip-types bench/compare.ts",
+    "bench:summary": "node --experimental-strip-types bench/summary.ts",
     "bench:engine": "node --experimental-strip-types bench/run.ts",
     "demo": "node --experimental-strip-types src/demo.ts",
     "demo:svg": "node --experimental-strip-types scripts/demo-svg.ts"
