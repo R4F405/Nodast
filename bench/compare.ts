@@ -387,9 +387,13 @@ async function nodastLoop(goal: string, oracle: Oracle, program?: string, layout
 const MAX_TURNS = 10;
 // Programs up to this many nodes go into the tool prompt whole, so the model can edit without calling find first.
 const INLINE_NODES = Number(process.env.BENCH_INLINE_NODES || 256);
-// A program or file shown whole leaves nothing to look up, so by default only the editing tool is offered:
-// edit for Nodast, replace for text. BENCH_INLINE_TOOLS=all offers every tool anyway, the behaviour before.
+// A program shown whole leaves nothing to look up, so by default Nodast gets only edit there.
+// BENCH_INLINE_TOOLS=all offers every tool anyway, the behaviour before.
 const INLINE_ALL = process.env.BENCH_INLINE_TOOLS === "all";
+// The text agent keeps grep, read and replace by default: on MiniMax, replace alone made it worse at renaming
+// (more calls, no-op replaces to check its work), and each side runs in its best setup.
+// BENCH_TEXT_INLINE_TOOLS=replace offers only replace when the whole file is shown.
+const TEXT_REPLACE_ONLY = process.env.BENCH_TEXT_INLINE_TOOLS === "replace";
 
 const TOOLS: ToolSpec[] = [
   {
@@ -627,8 +631,8 @@ async function textToolLoop(goal: string, oracle: Oracle, source: string, inline
   const loop = blank();
   const file = { text: source };
   const total = source.split("\n").length;
-  // The same rule as toolsFor on the Nodast side: a file shown whole gets only replace.
-  const offered = inline && !INLINE_ALL ? ["replace"] : TEXT_TOOLS.map((tool) => tool.name);
+  // Only with BENCH_TEXT_INLINE_TOOLS=replace does a file shown whole get replace alone.
+  const offered = inline && TEXT_REPLACE_ONLY ? ["replace"] : TEXT_TOOLS.map((tool) => tool.name);
   const replaceOnly = !offered.includes("grep");
   const system = [
     "A TypeScript file is loaded. Keep the last statement as the expression whose value is the result.",
@@ -963,7 +967,7 @@ ${perItem(GOALS.map((goal) => goal.goal), written, WRITE_SIDES)}
 
 ## Editar un archivo existente
 
-Una cadena de \`let\` donde cada paso suma o resta una constante. Nodast sin tools recibe el árbol con un id delante de cada nodo y devuelve \`(edits ...)\`; se prueba con cada \`let\` en su línea y con todo en una. La variante con tools usa \`find\`, \`show\` y \`edit\` por function calling, hasta ${MAX_TURNS} llamadas; sus intentos son llamadas a \`edit\`, que recibe \`id\`, \`expr\` y \`op\` como campos sueltos. Su prompt resume la gramática en una línea. Con ≤ ${INLINE_NODES} nodos recibe además el árbol entero con ids${INLINE_ALL ? ", con las tres tools" : " y solo \`edit\`, porque no queda nada que buscar"}; con más, solo un resumen y las tres. Un \`edit\` aceptado con \`done\` cierra la sesión sin otra llamada. Texto con tools es lo que usa un agente de código sobre un archivo normal: \`grep\` busca líneas, \`read\` muestra un rango y \`replace\` cambia un texto exacto que aparezca una sola vez; como un editor, \`replace\` se aplica siempre y avisa si el archivo deja de compilar o de correr, y se juzga el archivo final. Recibe el archivo entero en el mismo caso en que Nodast con tools recibe el árbol${INLINE_ALL ? " con las tres tools" : ", y entonces solo \`replace\`"}, con el mismo \`done\` y el mismo tope de llamadas. El texto plano recibe el TypeScript y devuelve el archivo entero. El oráculo es el valor final del programa ya editado.
+Una cadena de \`let\` donde cada paso suma o resta una constante. Nodast sin tools recibe el árbol con un id delante de cada nodo y devuelve \`(edits ...)\`; se prueba con cada \`let\` en su línea y con todo en una. La variante con tools usa \`find\`, \`show\` y \`edit\` por function calling, hasta ${MAX_TURNS} llamadas; sus intentos son llamadas a \`edit\`, que recibe \`id\`, \`expr\` y \`op\` como campos sueltos. Su prompt resume la gramática en una línea. Con ≤ ${INLINE_NODES} nodos recibe además el árbol entero con ids${INLINE_ALL ? ", con las tres tools" : " y solo \`edit\`, porque no queda nada que buscar"}; con más, solo un resumen y las tres. Un \`edit\` aceptado con \`done\` cierra la sesión sin otra llamada. Texto con tools es lo que usa un agente de código sobre un archivo normal: \`grep\` busca líneas, \`read\` muestra un rango y \`replace\` cambia un texto exacto que aparezca una sola vez; como un editor, \`replace\` se aplica siempre y avisa si el archivo deja de compilar o de correr, y se juzga el archivo final. Recibe el archivo entero en el mismo caso en que Nodast con tools recibe el árbol${TEXT_REPLACE_ONLY ? ", y entonces solo \`replace\`" : ", con sus tres tools: con solo \`replace\`, MiniMax renombraba peor"}, con el mismo \`done\` y el mismo tope de llamadas. El texto plano recibe el TypeScript y devuelve el archivo entero. El oráculo es el valor final del programa ya editado.
 
 ${editSections.join("\n\n")}
 
