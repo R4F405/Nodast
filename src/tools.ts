@@ -9,8 +9,14 @@ import { addParameter, KINDS, locate, names, renameBinding, walk, type ScopedRes
 // The calls a model makes to work on one program without reading all of it.
 // Every reply is short plain text, so it costs little context and reads the same through MCP, a CLI or function calling.
 
+export type ToolName = "find" | "show" | "edit";
+export const TOOL_NAMES: readonly ToolName[] = ["find", "show", "edit"];
+
 // used holds every id the session has had, so an edit never gives a new node an id the model saw on another node.
-export type Session = { tree: Expr; used: Set<string> };
+// tools, when set, is the list of calls the session answers; the others are refused. Absent means all of them.
+export type Session = { tree: Expr; used: Set<string>; tools?: readonly ToolName[] };
+
+export type OpenOptions = { tools?: readonly ToolName[] };
 
 export type FindQuery = { text?: string; kind?: string; name?: string; limit?: number };
 
@@ -24,14 +30,17 @@ const MAX_SPOTS = 3;
 // model has no reason to call show to check it.
 const SPOT_DEPTH = 2;
 
-export function open(source: string): { ok: true; session: Session; summary: string } | { ok: false; error: string } {
+export function open(source: string, options: OpenOptions = {}): { ok: true; session: Session; summary: string } | { ok: false; error: string } {
   const parsed = parse(source);
   if (!parsed.ok) {
     return { ok: false, error: `parse ${parsed.error.position.line}:${parsed.error.position.column} ${parsed.error.message}` };
   }
   const checked = check(parsed.tree);
   if (!checked.ok) return { ok: false, error: errorLine(checked.error, parsed.tree) };
-  const session = { tree: parsed.tree, used: new Set<string>() };
+  const unknown = options.tools?.find((name) => !TOOL_NAMES.includes(name));
+  if (unknown !== undefined) return { ok: false, error: `unknown tool ${unknown}; tools are ${TOOL_NAMES.join(" ")}` };
+  const session: Session = { tree: parsed.tree, used: new Set<string>() };
+  if (options.tools !== undefined) session.tools = [...options.tools];
   remember(session);
   return { ok: true, session, summary: summary(session) };
 }
@@ -41,6 +50,24 @@ export function open(source: string): { ok: true; session: Session; summary: str
 export function view(session: Session, maxNodes: number): string | undefined {
   if (count(session.tree) > maxNodes) return undefined;
   return compact(session.tree, { ids: true, layout: "lines" });
+}
+
+// The tools worth offering a model for this session. When the program is small enough for view to show it whole,
+// there is nothing left to find or show, and a model offered those calls spends turns re-reading what it already
+// has, so only edit remains. Larger programs get all three.
+export function toolsFor(session: Session, maxNodes: number): ToolName[] {
+  return count(session.tree) <= maxNodes ? ["edit"] : [...TOOL_NAMES];
+}
+
+// Whether the session answers this call.
+export function offers(session: Session, name: string): boolean {
+  return (session.tools ?? TOOL_NAMES).includes(name as ToolName);
+}
+
+function refused(session: Session, name: ToolName): string | undefined {
+  if (offers(session, name)) return undefined;
+  const tools = session.tools ?? [];
+  return `${name} is not offered in this session; tools are ${tools.length === 0 ? "none" : tools.join(" ")}`;
 }
 
 export function summary(session: Session): string {
@@ -54,6 +81,10 @@ export function summary(session: Session): string {
 // Each hit is shown inside its parent, one level deep, so the model can edit right after without a show call.
 // Empty or blank fields count as absent: some models fill every parameter of a tool, sending "" for the ones they skip.
 export function find(session: Session, raw: FindQuery): string {
+  return refused(session, "find") ?? search(session, raw);
+}
+
+function search(session: Session, raw: FindQuery): string {
   const query = filled(raw);
   if (query.kind !== undefined) query.kind = KIND_ALIASES[query.kind] ?? query.kind;
   if (query.kind !== undefined && !KINDS.includes(query.kind)) return `unknown kind ${query.kind}; kinds are ${KINDS.join(" ")}`;
@@ -76,6 +107,8 @@ export function find(session: Session, raw: FindQuery): string {
 }
 
 export function show(session: Session, id: string, depth = SHOW_DEPTH): string {
+  const no = refused(session, "show");
+  if (no !== undefined) return no;
   const node = locate(session.tree, id);
   if (node === undefined) return `unknown-id ${id}`;
   return compact(node, { ids: true, depth });
@@ -84,6 +117,8 @@ export function show(session: Session, id: string, depth = SHOW_DEPTH): string {
 // Applies an (edits ...) list. On success the session moves to the new tree; on failure it stays as it was.
 // Bare operations like (replace n4 7) or several of them are wrapped in (edits ...), since models often drop it.
 export function edit(session: Session, text: string): string {
+  const no = refused(session, "edit");
+  if (no !== undefined) return no;
   const trimmed = text.trim();
   const bare = /^\(\s*(replace|insert|delete|rename|param)\b/.test(trimmed);
   const applied = applyEditText(session.tree, bare ? `(edits ${trimmed})` : trimmed, session.used);
@@ -103,6 +138,8 @@ export type Change = { op?: string; id: string; expr?: string; index?: number; n
 // One edit as separate fields, for function calling: the model fills id and expr instead of writing an
 // (edits ...) list, so the prompt needs no edit grammar. op defaults to replace.
 export function change(session: Session, input: Change): string {
+  const no = refused(session, "edit");
+  if (no !== undefined) return no;
   const op = input.op === undefined || input.op.trim() === "" ? "replace" : input.op.trim();
   let id = input.id.trim();
   // A node can be named by its exact text instead of its id, so a model that knows what to change but not
@@ -114,7 +151,7 @@ export function change(session: Session, input: Change): string {
       if (matches(node, { text })) hits.push(node.id);
     });
     if (hits.length === 0) return `rejected: no node is exactly ${text}`;
-    if (hits.length > 1) return `rejected: ${hits.length} nodes are ${text}; pick an id:\n${find(session, { text })}`;
+    if (hits.length > 1) return `rejected: ${hits.length} nodes are ${text}; pick an id:\n${search(session, { text })}`;
     id = hits[0] ?? "";
   }
   const expr = (input.expr ?? "").trim();
@@ -137,11 +174,15 @@ export function change(session: Session, input: Change): string {
 
 // Adds a parameter to a let-bound function and passes expr at every call of it. See scope.ts.
 export function addParam(session: Session, id: string, name: string, expr: string, index?: number): string {
+  const no = refused(session, "edit");
+  if (no !== undefined) return no;
   return commit(session, addParameter(session.tree, id, name, expr, index, session.used));
 }
 
 // Renames one binding and every use that resolves to it, following scopes. See scope.ts.
 export function rename(session: Session, id: string, to: string): string {
+  const no = refused(session, "edit");
+  if (no !== undefined) return no;
   return commit(session, renameBinding(session.tree, id, to));
 }
 

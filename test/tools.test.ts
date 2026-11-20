@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { change, edit, find, open, printed, show, view } from "../src/tools.ts";
+import { change, edit, find, offers, open, printed, show, TOOL_NAMES, toolsFor, view } from "../src/tools.ts";
 
 const SOURCE = "(let v0 5 (let v1 (add v0 70001) (let v2 (sub v1 70002) v2)))";
 
@@ -132,4 +132,42 @@ test("shows a small program whole and hides a large one", () => {
     "n1:(let v0 n2:5\nn3:(let v1 n4:(add n5:v0 n6:70001)\nn7:(let v2 n8:(sub n9:v1 n10:70002)\nn11:v2)))",
   );
   assert.equal(view(s, 10), undefined);
+});
+
+test("offers only edit for a program small enough to show whole", () => {
+  const { session: s } = session();
+  assert.deepEqual(toolsFor(s, 11), ["edit"]);
+  assert.deepEqual(toolsFor(s, 10), ["find", "show", "edit"]);
+  // A session with no tool list answers every call.
+  assert.equal(offers(s, "find"), true);
+  assert.deepEqual(TOOL_NAMES, ["find", "show", "edit"]);
+});
+
+test("a session opened with a tool list refuses the others", () => {
+  const opened = open(SOURCE, { tools: ["edit"] });
+  if (!opened.ok) throw new Error(opened.error);
+  const s = opened.session;
+  assert.equal(offers(s, "find"), false);
+  assert.equal(offers(s, "edit"), true);
+  assert.equal(find(s, { text: "70002" }), "find is not offered in this session; tools are edit");
+  assert.equal(show(s, "n8"), "show is not offered in this session; tools are edit");
+  assert.equal(change(s, { id: "n10", expr: "7" }), "ok, type number, now n8:(sub n9:v1 n12:7)");
+  // Naming a node by text still lists the candidates without find.
+  const two = open("(let a 1 (add a a))", { tools: ["edit"] });
+  if (!two.ok) throw new Error(two.error);
+  assert.match(change(two.session, { id: "", text: "a", expr: "2" }), /^rejected: 2 nodes are a; pick an id:\nn1:\(let a /);
+  // A read-only session refuses every kind of edit and leaves the tree alone.
+  const reader = open(SOURCE, { tools: ["find", "show"] });
+  if (!reader.ok) throw new Error(reader.error);
+  const r = reader.session;
+  const refusal = "edit is not offered in this session; tools are find show";
+  assert.equal(edit(r, "(replace n10 7)"), refusal);
+  assert.equal(change(r, { op: "rename", id: "n1", name: "x" }), refusal);
+  assert.equal(change(r, { op: "param", id: "n1", name: "k", expr: "1" }), refusal);
+  assert.equal(printed(r), "const v0 = 5;\nconst v1 = v0 + 70001;\nconst v2 = v1 - 70002;\nv2;\n");
+  assert.equal(find(r, { text: "70002" }), "n10:70002 in n8:(sub n9:v1 n10:70002)");
+});
+
+test("open refuses an unknown tool name", () => {
+  assert.deepEqual(open(SOURCE, { tools: ["grep" as "find"] }), { ok: false, error: "unknown tool grep; tools are find show edit" });
 });

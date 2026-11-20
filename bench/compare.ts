@@ -5,7 +5,20 @@ import { stripThink } from "../src/minimax.ts";
 import { parse } from "../src/parse.ts";
 import { print } from "../src/print.ts";
 import { run } from "../src/contract.ts";
-import { change, find, open, printed, show, view, type Change, type FindQuery, type Session } from "../src/tools.ts";
+import {
+  change,
+  find,
+  open,
+  printed,
+  show,
+  TOOL_NAMES,
+  toolsFor,
+  view,
+  type Change,
+  type FindQuery,
+  type Session,
+  type ToolName,
+} from "../src/tools.ts";
 import {
   editTasks,
   GOALS,
@@ -374,6 +387,9 @@ async function nodastLoop(goal: string, oracle: Oracle, program?: string, layout
 const MAX_TURNS = 10;
 // Programs up to this many nodes go into the tool prompt whole, so the model can edit without calling find first.
 const INLINE_NODES = Number(process.env.BENCH_INLINE_NODES || 256);
+// A program or file shown whole leaves nothing to look up, so by default only the editing tool is offered:
+// edit for Nodast, replace for text. BENCH_INLINE_TOOLS=all offers every tool anyway, the behaviour before.
+const INLINE_ALL = process.env.BENCH_INLINE_TOOLS === "all";
 
 const TOOLS: ToolSpec[] = [
   {
@@ -463,15 +479,22 @@ async function toolLoop(goal: string, oracle: Oracle, source: string): Promise<L
   if (!opened.ok) throw new Error(opened.error);
   const session = opened.session;
   const whole = view(session, INLINE_NODES);
+  const offered: readonly ToolName[] = INLINE_ALL ? TOOL_NAMES : toolsFor(session, INLINE_NODES);
+  session.tools = offered;
+  const editOnly = !offered.includes("find");
   const system = [
     "A Nodast program is loaded. Forms: (let name value body) (fn (a b) body) (if c then else) (f args) and add sub mul div eq lt gt lte gte, each (op a b).",
     whole === undefined
       ? "Each node has an id, like n4:(add n5:v0 n6:7). You cannot see the program: find shows each match inside its parent, with ids, so you can edit right after it."
-      : "Each node has an id, like n4:(add n5:v0 n6:7). The program is in the user message with its current ids: edit it directly, without find or show.",
-    "Only the edit tool changes it. Set done on the edit that completes the goal. An ok edit reply shows the change: no need to check it again.",
+      : editOnly
+        ? "Each node has an id, like n4:(add n5:v0 n6:7). The whole program is in the user message with its current ids."
+        : "Each node has an id, like n4:(add n5:v0 n6:7). The program is in the user message with its current ids: edit it directly, without find or show.",
+    editOnly
+      ? "The edit tool changes it. Set done on the edit that completes the goal. An ok edit reply shows the change: it is applied, no need to check it again. Once the goal is complete, stop: reply without a tool call."
+      : "Only the edit tool changes it. Set done on the edit that completes the goal. An ok edit reply shows the change: no need to check it again.",
   ].join("\n");
   const prompt = [`program: ${opened.summary}`, ...(whole === undefined ? [] : [whole]), "", `goal: ${goal}`].join("\n");
-  const chat = openChat(system, prompt, TOOLS);
+  const chat = openChat(system, prompt, TOOLS.filter((tool) => offered.includes(tool.name as ToolName)));
   let edits = 0;
   let finished = false;
   for (let turn = 1; turn <= MAX_TURNS && !finished; turn += 1) {
@@ -547,7 +570,7 @@ function numbered(lines: readonly string[], start: number): string {
   return lines.map((line, index) => `${start + index}: ${line}`).join("\n");
 }
 
-function callTextTool(file: { text: string }, call: Call): ToolResult {
+function callTextTool(file: { text: string }, call: Call, offered: readonly string[]): ToolResult {
   let args: Record<string, unknown>;
   try {
     args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
@@ -556,6 +579,7 @@ function callTextTool(file: { text: string }, call: Call): ToolResult {
   }
   const str = (key: string): string => (typeof args[key] === "string" ? (args[key] as string) : "");
   const lines = file.text.split("\n");
+  if (!offered.includes(call.name)) return { text: `unknown tool ${call.name}; tools are ${offered.join(" ")}`, edit: null, done: false };
   switch (call.name) {
     case "grep": {
       const needle = str("text");
@@ -603,15 +627,22 @@ async function textToolLoop(goal: string, oracle: Oracle, source: string, inline
   const loop = blank();
   const file = { text: source };
   const total = source.split("\n").length;
+  // The same rule as toolsFor on the Nodast side: a file shown whole gets only replace.
+  const offered = inline && !INLINE_ALL ? ["replace"] : TEXT_TOOLS.map((tool) => tool.name);
+  const replaceOnly = !offered.includes("grep");
   const system = [
     "A TypeScript file is loaded. Keep the last statement as the expression whose value is the result.",
-    inline
-      ? "The file is in the user message: edit it directly, without grep or read."
-      : "You cannot see the file: grep shows each matching line with its number, so you can replace right after it.",
-    "Only the replace tool changes the file; a change written as text does nothing. Call replace with done set to true when it completes the goal. An ok replace reply shows the change: no need to check it again.",
+    !inline
+      ? "You cannot see the file: grep shows each matching line with its number, so you can replace right after it."
+      : replaceOnly
+        ? "The whole file is in the user message."
+        : "The file is in the user message: edit it directly, without grep or read.",
+    replaceOnly
+      ? "The replace tool changes the file; a change written as text does nothing. Call replace with done set to true when it completes the goal. An ok replace reply shows the change: it is applied, no need to check it again. Once the goal is complete, stop: reply without a tool call."
+      : "Only the replace tool changes the file; a change written as text does nothing. Call replace with done set to true when it completes the goal. An ok replace reply shows the change: no need to check it again.",
   ].join("\n");
   const prompt = [`file: ${total} lines`, ...(inline ? [source] : []), "", `goal: ${goal}`].join("\n");
-  const chat = openChat(system, prompt, TEXT_TOOLS);
+  const chat = openChat(system, prompt, TEXT_TOOLS.filter((tool) => offered.includes(tool.name)));
   let edits = 0;
   let finished = false;
   for (let turn = 1; turn <= MAX_TURNS && !finished; turn += 1) {
@@ -627,7 +658,7 @@ async function textToolLoop(goal: string, oracle: Oracle, source: string, inline
     trackCalls(loop, reply.calls);
     if (reply.calls.length === 0) break;
     for (const call of reply.calls) {
-      const result = callTextTool(file, call);
+      const result = callTextTool(file, call, offered);
       if (result.edit !== null) {
         edits += 1;
         if (edits === 1) loop.pass1 = result.edit === "ok";
@@ -932,7 +963,7 @@ ${perItem(GOALS.map((goal) => goal.goal), written, WRITE_SIDES)}
 
 ## Editar un archivo existente
 
-Una cadena de \`let\` donde cada paso suma o resta una constante. Nodast sin tools recibe el árbol con un id delante de cada nodo y devuelve \`(edits ...)\`; se prueba con cada \`let\` en su línea y con todo en una. La variante con tools usa \`find\`, \`show\` y \`edit\` por function calling, hasta ${MAX_TURNS} llamadas; sus intentos son llamadas a \`edit\`, que recibe \`id\`, \`expr\` y \`op\` como campos sueltos. Su prompt resume la gramática en una línea. Con ≤ ${INLINE_NODES} nodos recibe además el árbol entero con ids; con más, solo un resumen. Un \`edit\` aceptado con \`done\` cierra la sesión sin otra llamada. Texto con tools es lo que usa un agente de código sobre un archivo normal: \`grep\` busca líneas, \`read\` muestra un rango y \`replace\` cambia un texto exacto que aparezca una sola vez; como un editor, \`replace\` se aplica siempre y avisa si el archivo deja de compilar o de correr, y se juzga el archivo final. Recibe el archivo entero en el mismo caso en que Nodast con tools recibe el árbol, con el mismo \`done\` y el mismo tope de llamadas. El texto plano recibe el TypeScript y devuelve el archivo entero. El oráculo es el valor final del programa ya editado.
+Una cadena de \`let\` donde cada paso suma o resta una constante. Nodast sin tools recibe el árbol con un id delante de cada nodo y devuelve \`(edits ...)\`; se prueba con cada \`let\` en su línea y con todo en una. La variante con tools usa \`find\`, \`show\` y \`edit\` por function calling, hasta ${MAX_TURNS} llamadas; sus intentos son llamadas a \`edit\`, que recibe \`id\`, \`expr\` y \`op\` como campos sueltos. Su prompt resume la gramática en una línea. Con ≤ ${INLINE_NODES} nodos recibe además el árbol entero con ids${INLINE_ALL ? ", con las tres tools" : " y solo \`edit\`, porque no queda nada que buscar"}; con más, solo un resumen y las tres. Un \`edit\` aceptado con \`done\` cierra la sesión sin otra llamada. Texto con tools es lo que usa un agente de código sobre un archivo normal: \`grep\` busca líneas, \`read\` muestra un rango y \`replace\` cambia un texto exacto que aparezca una sola vez; como un editor, \`replace\` se aplica siempre y avisa si el archivo deja de compilar o de correr, y se juzga el archivo final. Recibe el archivo entero en el mismo caso en que Nodast con tools recibe el árbol${INLINE_ALL ? " con las tres tools" : ", y entonces solo \`replace\`"}, con el mismo \`done\` y el mismo tope de llamadas. El texto plano recibe el TypeScript y devuelve el archivo entero. El oráculo es el valor final del programa ya editado.
 
 ${editSections.join("\n\n")}
 
