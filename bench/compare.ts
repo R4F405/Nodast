@@ -487,7 +487,7 @@ async function toolLoop(goal: string, oracle: Oracle, source: string): Promise<L
     whole === undefined
       ? "Each node has an id, like n4:(add n5:v0 n6:7). You cannot see the program: find shows each match inside its parent, with ids, so you can edit right after it."
       : editOnly
-        ? "Each node has an id, like n4:(add n5:v0 n6:7). The whole program is in the user message with its current ids."
+        ? "The whole program is in the user message, each node prefixed with its current id: in n1:(let x n2:3 n3:(add n4:x n5:7)), n1 is the let of x, n2 its value and n3 its body."
         : "Each node has an id, like n4:(add n5:v0 n6:7). The program is in the user message with its current ids: edit it directly, without find or show.",
     editOnly
       ? "The edit tool changes it. Set done on the edit that completes the goal. An ok edit reply shows the change: it is applied, no need to check it again. Once the goal is complete, stop: reply without a tool call."

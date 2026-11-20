@@ -83,7 +83,8 @@ test("renames a binding and only the uses that resolve to it", () => {
   );
   assert.equal(change(s, { op: "rename", id: "n7", expr: "x" }), "ok, type number, renamed scale to x and 1 uses");
   assert.equal(change(s, { op: "rename", id: "n1", expr: "a" }), "rejected: name a is already used");
-  assert.equal(change(s, { op: "rename", id: "n2", expr: "y" }), "rejected: n2 is not a let or a bound use");
+  assert.equal(change(s, { op: "rename", id: "n2", expr: "y" }), "rejected: n2 is not a let or a bound use; it is the value of n1, the let of x");
+  assert.equal(change(s, { op: "rename", id: "n8", expr: "y" }), "rejected: n8 is not a let or a bound use");
   assert.equal(change(s, { op: "rename", id: "n1", expr: "let" }), "rejected: bad name let");
 });
 

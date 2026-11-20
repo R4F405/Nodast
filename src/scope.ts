@@ -34,7 +34,14 @@ export function renameBinding(tree: Expr, id: string, to: string): ScopedResult 
     }
   });
   if (target === undefined) {
-    return locate(tree, id) === undefined ? unknown(id) : refuse(`${id} is not a let or a bound use`);
+    if (locate(tree, id) === undefined) return unknown(id);
+    // Reading n1:(let rate n2:3 ...), models often take n2, the id right after the name, for the binding.
+    let owner: Expr | undefined;
+    walk(tree, null, (node, parent) => {
+      if (node.id === id && parent?.kind === "let" && parent.value === node) owner = parent;
+    });
+    const hint = owner?.kind === "let" ? `; it is the value of ${owner.id}, the let of ${owner.name}` : "";
+    return refuse(`${id} is not a let or a bound use${hint}`);
   }
   if (taken) return refuse(`name ${to} is already used`);
   if (target.includes(":")) return refuse("rename a function parameter by replacing its fn");
